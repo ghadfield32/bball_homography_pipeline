@@ -1,0 +1,6 @@
+# column roles for fake_basketball.csv
+y_variable: points
+numerical: [assists, rebounds, minutes]
+nominal: [team, name, player_id]
+ordinal: []          # add later if needed
+id_cols: [player_id] # optional: kept for joins/reporting, dropped from X
