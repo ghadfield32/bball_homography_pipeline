@@ -1,34 +1,96 @@
-# Ignore VCS and editor cruft
-**/.git
-**/.vscode
-**/.idea
+# Reduce Docker build context
+.git
+.gitignore
+.gitattributes
+.gitmodules
+.vscode
+.idea
+*.swp
+*.swo
+*~
 .DS_Store
 Thumbs.db
-
-# Bytecode and caches
-**/__pycache__
-**/*.pyc
-**/*.pyo
-**/*.pyd
-**/*.swp
-
-# Virtualenvs
-**/venv
-**/env
-
-# Workspace env files
-.env
-*.code-workspace
-
-# Large or generated data
-data/
-
-# Jupyter checkpoints
-notebooks/**/*.ipynb_checkpoints
-
-# Logs
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+.coverage*
+.cache
+.pytest_cache
+.mypy_cache
+.tox
+pip-log.txt
+pip-delete-this-directory.txt
+env
+venv
+ENV
+env.bak
+venv.bak
+.ipynb_checkpoints
+# Large data (adjust as needed)
+data/raw
+data/external
+*.csv
+*.parquet
+*.h5
+*.hdf5
+# Models
+*.pt
+*.pth
+*.pkl
+*.joblib
+models/
+# Logs and temps
 *.log
-
-# MLflow runs & artifacts (often huge, sometimes root-owned)
-mlruns
-
+logs/
+*.tmp
+*.temp
+.tmp
+temp/
+# Build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+# Node
+node_modules
+npm-debug.log*
+yarn-*.log*
+.npm
+.eslintcache
+.node_repl_history
+*.tgz
+*.tar.gz
+# Archives
+*.zip
+*.tar
+*.tar.bz2
+*.rar
+*.7z
+# Docs (opt‑in if needed)
+docs/
+*.md
+README*
+LICENSE*
+CHANGELOG*
+# Tests (opt‑in if needed)
+tests/
+test_*
+*_test.py
+# CI
+.github/
+.gitlab-ci.yml
+.travis.yml
+.circleci/
+azure-pipelines.yml
+# Env
+.env
+.env.local
+.env.*.local
+.editorconfig
+.prettierrc*
+.eslintrc*
+# Universal junk (de‑duped)
+*.py[cod]

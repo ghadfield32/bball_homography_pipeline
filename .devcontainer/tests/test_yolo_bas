@@ -1,0 +1,380 @@
+#!/usr/bin/env python3
+"""
+YOLO Basketball Detection Test
+Tests YOLO functionality on basketball images to ensure the package works correctly.
+"""
+import os
+import cv2
+import numpy as np
+import matplotlib.pyplot as plt
+from ultralytics import YOLO
+import torch
+import sys
+from pathlib import Path
+import requests
+from urllib.parse import urlparse
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+class YOLOBasketballTester:
+    """Test YOLO functionality with basketball-specific scenarios."""
+    
+    def __init__(self, model_name="yolov8n.pt", force_cpu=False):
+        """Initialize the YOLO tester."""
+        self.model_name = model_name
+        self.force_cpu = force_cpu
+        self.model = None
+        self.device = "cpu" if force_cpu else ("cuda" if torch.cuda.is_available() else "cpu")
+        
+        # Create directories for test data
+        self.data_dir = Path("/workspace/data")
+        self.images_dir = self.data_dir / "images"
+        self.output_dir = self.data_dir / "output"
+        
+        for dir_path in [self.data_dir, self.images_dir, self.output_dir]:
+            dir_path.mkdir(exist_ok=True, parents=True)
+        
+        self.test_image_path = self.images_dir / "basketball_test.jpg"
+        
+    def setup_test_environment(self):
+        """Set up the test environment and download test image if needed."""
+        print("=" * 60)
+        print("YOLO BASKETBALL DETECTION TEST")
+        print("=" * 60)
+        
+        # Check environment
+        print(f"Python version: {sys.version}")
+        print(f"OpenCV version: {cv2.__version__}")
+        print(f"PyTorch version: {torch.__version__}")
+        print(f"CUDA available: {torch.cuda.is_available()}")
+        print(f"Device selected: {self.device}")
+        
+        # Get or create test image
+        if not self.test_image_path.exists():
+            print(f"\nTest image not found at {self.test_image_path}")
+            self._create_or_download_test_image()
+        else:
+            print(f"Using existing test image: {self.test_image_path}")
+    
+    def _create_or_download_test_image(self):
+        """Create or download a basketball test image."""
+        print("Creating synthetic basketball test image...")
+        
+        # Create a synthetic basketball court scene
+        image = self._create_synthetic_basketball_scene()
+        
+        # Save the image
+        cv2.imwrite(str(self.test_image_path), image)
+        print(f"Created synthetic test image: {self.test_image_path}")
+        
+        return str(self.test_image_path)
+    
+    def _create_synthetic_basketball_scene(self):
+        """Create a synthetic basketball scene for testing."""
+        # Create a 1280x720 image (HD resolution)
+        width, height = 1280, 720
+        image = np.zeros((height, width, 3), dtype=np.uint8)
+        
+        # Basketball court background (brown/tan)
+        court_color = (139, 115, 85)  # Brown color in BGR
+        image[:] = court_color
+        
+        # Draw court lines (white)
+        line_color = (255, 255, 255)
+        line_thickness = 3
+        
+        # Center line
+        cv2.line(image, (width//2, 0), (width//2, height), line_color, line_thickness)
+        
+        # Center circle
+        cv2.circle(image, (width//2, height//2), 100, line_color, line_thickness)
+        
+        # Free throw lines
+        ft_line_y = height // 4
+        cv2.line(image, (0, ft_line_y), (width, ft_line_y), line_color, line_thickness)
+        cv2.line(image, (0, height - ft_line_y), (width, height - ft_line_y), line_color, line_thickness)
+        
+        # Add some "players" (rectangles representing people)
+        player_color = (255, 0, 0)  # Blue jerseys
+        player_positions = [
+            (200, 300, 60, 120),  # x, y, width, height
+            (400, 400, 60, 120),
+            (800, 350, 60, 120),
+            (1000, 250, 60, 120),
+            (600, 500, 60, 120),
+        ]
+        
+        for x, y, w, h in player_positions:
+            cv2.rectangle(image, (x, y), (x + w, y + h), player_color, -1)
+            # Add head (circle)
+            cv2.circle(image, (x + w//2, y - 20), 15, (255, 200, 150), -1)
+        
+        # Add a "basketball" (orange circle)
+        ball_center = (640, 360)  # Center of image
+        ball_radius = 15
+        ball_color = (0, 165, 255)  # Orange in BGR
+        cv2.circle(image, ball_center, ball_radius, ball_color, -1)
+        
+        # Add some lines to make it look more like a basketball
+        cv2.line(image, (ball_center[0] - ball_radius, ball_center[1]), 
+                (ball_center[0] + ball_radius, ball_center[1]), (0, 0, 0), 2)
+        cv2.line(image, (ball_center[0], ball_center[1] - ball_radius), 
+                (ball_center[0], ball_center[1] + ball_radius), (0, 0, 0), 2)
+        
+        return image
+    
+    def load_yolo_model(self):
+        """Load the YOLO model."""
+        print(f"\nLoading YOLO model: {self.model_name}")
+        
+        try:
+            # Load model
+            self.model = YOLO(self.model_name)
+            
+            # Move to appropriate device
+            if self.device == "cuda":
+                self.model.to('cuda')
+            
+            print(f"Model loaded successfully on {self.device}")
+            print(f"Model classes: {len(self.model.names)} total")
+            
+            # Show relevant classes for basketball
+
+%%writefile ../../.devcontainer/validate_gpu.py
+#!/usr/bin/env python3
+"""
+YOLO Basketball Detection Test
+Tests YOLO functionality on basketball images to ensure the package works correctly.
+"""
+            for class_id, class_name in relevant_classes.items():
+                if class_id in self.model.names:
+                    print(f"  {class_id}: {self.model.names[class_id]}")
+            
+            return True
+            
+        except Exception as e:
+            print(f"Error loading YOLO model: {e}")
+            return False
+    
+    def test_yolo_detection(self):
+        """Test YOLO detection on the basketball image."""
+        print(f"\nTesting YOLO detection on {self.test_image_path}")
+        
+        # Load image
+        image = cv2.imread(str(self.test_image_path))
+        if image is None:
+            print(f"Error: Could not load image from {self.test_image_path}")
+            return False
+        
+        print(f"Image loaded: {image.shape}")
+        
+        try:
+            # Run detection
+            print("Running YOLO detection...")
+            results = self.model(
+                image,
+                conf=0.25,  # Lower confidence for testing
+                iou=0.45,
+                verbose=False
+            )
+            
+            # Process results
+            detections = results[0]
+            
+            print(f"Detection completed!")
+            print(f"Number of detections: {len(detections.boxes) if detections.boxes is not None else 0}")
+            
+            # Analyze detections
+            detection_summary = self._analyze_detections(detections)
+            
+            # Create annotated image
+            annotated_image = self._create_annotated_image(image, detections)
+            
+            # Save results
+            output_path = self.output_dir / "basketball_test_result.jpg"
+            cv2.imwrite(str(output_path), annotated_image)
+            print(f"Annotated result saved to: {output_path}")
+            
+            return True, detection_summary, str(output_path)
+            
+        except Exception as e:
+            print(f"Error during YOLO detection: {e}")
+            return False, None, None
+    
+    def _analyze_detections(self, detections):
+        """Analyze detection results."""
+        summary = {
+            'total_detections': 0,
+            'persons': 0,
+            'sports_balls': 0,
+            'other_objects': 0,
+            'confidence_scores': [],
+            'class_names': []
+        }
+        
+        if detections.boxes is None:
+            print("No detections found.")
+            return summary
+        
+        boxes = detections.boxes
+        summary['total_detections'] = len(boxes)
+        
+        for i in range(len(boxes)):
+            class_id = int(boxes.cls[i])
+            confidence = float(boxes.conf[i])
+            class_name = self.model.names[class_id]
+            
+            summary['confidence_scores'].append(confidence)
+            summary['class_names'].append(class_name)
+            
+            if class_id == 0:  # person
+                summary['persons'] += 1
+            elif class_id == 32:  # sports ball
+                summary['sports_balls'] += 1
+            else:
+                summary['other_objects'] += 1
+            
+            print(f"  Detection {i+1}: {class_name} (confidence: {confidence:.3f})")
+        
+        return summary
+    
+    def _create_annotated_image(self, image, detections):
+        """Create annotated image with detection results."""
+        annotated = image.copy()
+        
+        if detections.boxes is None:
+            return annotated
+        
+        boxes = detections.boxes
+        
+        for i in range(len(boxes)):
+            # Get box coordinates
+            x1, y1, x2, y2 = boxes.xyxy[i].int().tolist()
+            class_id = int(boxes.cls[i])
+            confidence = float(boxes.conf[i])
+            class_name = self.model.names[class_id]
+            
+            # Choose color based on class
+            if class_id == 0:  # person
+                color = (255, 0, 0)  # Blue
+            elif class_id == 32:  # sports ball
+                color = (0, 255, 255)  # Yellow
+            else:
+                color = (0, 255, 0)  # Green
+            
+            # Draw bounding box
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+            
+            # Draw label
+            label = f"{class_name}: {confidence:.2f}"
+            label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0]
+            cv2.rectangle(annotated, (x1, y1 - label_size[1] - 10), 
+                         (x1 + label_size[0], y1), color, -1)
+            cv2.putText(annotated, label, (x1, y1 - 5), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        
+        return annotated
+    
+    def display_results(self, image_path, annotated_path):
+        """Display the original and annotated images."""
+        try:
+            # Load images
+            original = cv2.imread(image_path)
+            annotated = cv2.imread(annotated_path)
+            
+            # Convert BGR to RGB for matplotlib
+            original_rgb = cv2.cvtColor(original, cv2.COLOR_BGR2RGB)
+            annotated_rgb = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
+            
+            # Create subplot
+            fig, axes = plt.subplots(1, 2, figsize=(15, 7))
+            
+            axes[0].imshow(original_rgb)
+            axes[0].set_title("Original Basketball Test Image")
+            axes[0].axis('off')
+            
+            axes[1].imshow(annotated_rgb)
+            axes[1].set_title("YOLO Detection Results")
+            axes[1].axis('off')
+            
+            plt.tight_layout()
+            plt.show()
+            
+        except Exception as e:
+            print(f"Error displaying results: {e}")
+    
+    def run_full_test(self):
+        """Run the complete YOLO basketball test."""
+        print("Starting YOLO Basketball Detection Test...")
+        
+        # Step 1: Setup environment
+        self.setup_test_environment()
+        
+        # Step 2: Load YOLO model
+        if not self.load_yolo_model():
+            print("Failed to load YOLO model. Test aborted.")
+            return False
+        
+        # Step 3: Test detection
+        success, summary, output_path = self.test_yolo_detection()
+        
+        if not success:
+            print("YOLO detection test failed.")
+            return False
+        
+        # Step 4: Display results
+        print("\n" + "=" * 60)
+        print("TEST RESULTS SUMMARY")
+        print("=" * 60)
+        print(f"Total detections: {summary['total_detections']}")
+        print(f"Persons detected: {summary['persons']}")
+        print(f"Sports balls detected: {summary['sports_balls']}")
+        print(f"Other objects detected: {summary['other_objects']}")
+        
+        if summary['confidence_scores']:
+            avg_confidence = np.mean(summary['confidence_scores'])
+            print(f"Average confidence: {avg_confidence:.3f}")
+        
+        print(f"Results saved to: {output_path}")
+        
+        # Step 5: Visual display (if in Jupyter/interactive environment)
+        try:
+            self.display_results(str(self.test_image_path), output_path)
+        except:
+            print("Note: Visual display not available (likely running in non-interactive mode)")
+        
+        print("\n✅ YOLO Basketball Detection Test COMPLETED SUCCESSFULLY!")
+        return True
+
+
+def main():
+    """Main function to run the test."""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Test YOLO on basketball images")
+    parser.add_argument("--model", default="yolov8n.pt", help="YOLO model to use")
+    parser.add_argument("--cpu", action="store_true", help="Force CPU usage")
+    parser.add_argument("--image", help="Path to custom test image")
+    
+    args = parser.parse_args()
+    
+    # Create tester
+    tester = YOLOBasketballTester(model_name=args.model, force_cpu=args.cpu)
+    
+    # Use custom image if provided
+    if args.image and os.path.exists(args.image):
+        tester.test_image_path = Path(args.image)
+        print(f"Using custom test image: {args.image}")
+    
+    # Run test
+    success = tester.run_full_test()
+    
+    return 0 if success else 1
+
+
+if __name__ == "__main__":
+    exit(main())

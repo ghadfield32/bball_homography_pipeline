@@ -1,0 +1,189 @@
+name: ${ENV_NAME:-docker_dev_template}
+
+services:
+  datascience:
+    build:
+      context: .
+      dockerfile: .devcontainer/Dockerfile
+      args:
+        CUDA_TAG: ${CUDA_TAG:-12.4.0}
+        PYTHON_VER: ${PYTHON_VER:-3.10}
+        ENV_NAME: ${ENV_NAME:-docker_dev_template}
+      cache_from:
+        - nvidia/cuda:${CUDA_TAG:-12.4.0}-devel-ubuntu22.04
+
+    container_name: ${ENV_NAME:-docker_dev_template}_datascience
+
+    # UPDATED: Reference environment template from .devcontainer folder
+    env_file:
+      - .devcontainer/.env
+
+    restart: unless-stopped
+    depends_on:
+      mlflow:
+        condition: service_healthy
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, compute, utility, video]  # Added video capability
+
+    init: true
+    gpus: all
+    shm_size: 16g  # Increased for video processing
+    ulimits:
+      memlock: -1
+      stack: 67108864
+
+    environment:
+      - PYTHON_VER=${PYTHON_VER:-3.10}
+      - UV_PROJECT_ENVIRONMENT=/app/.venv
+      - VIRTUAL_ENV=/app/.venv
+      - PYTHONPATH=/workspace
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
+      - CUDA_VISIBLE_DEVICES=0
+      - LD_LIBRARY_PATH=/app/.venv/lib:/usr/local/cuda/lib64
+      - LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2
+      - MALLOC_ARENA_MAX=2
+      - MALLOC_TCACHE_MAX=0
+      - PYTORCH_NO_CUDA_MEMORY_CACHING=1
+      
+      # CRITICAL FIX: Removed inline comments from JAX environment variables
+      # These were causing "could not convert string to float" errors
+      - XLA_PYTHON_CLIENT_PREALLOCATE=false
+      - XLA_PYTHON_CLIENT_ALLOCATOR=platform
+      - XLA_PYTHON_CLIENT_MEM_FRACTION=0.4
+      - XLA_FLAGS=--xla_gpu_cuda_data_dir=/usr/local/cuda
+      - JAX_PREALLOCATION_SIZE_LIMIT_BYTES=17179869184
+      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:1024,expandable_segments:True
+      - JUPYTER_TOKEN=${JUPYTER_TOKEN:-jupyter}
+      
+      # Computer Vision configuration
+      - YOLO_VERBOSE=${YOLO_VERBOSE:-false}
+      - OPENCV_LOG_LEVEL=${OPENCV_LOG_LEVEL:-ERROR}
+      - ROBOFLOW_API_KEY=${ROBOFLOW_API_KEY:-}
+      - ULTRALYTICS_HUB_API_KEY=${ULTRALYTICS_HUB_API_KEY:-}
+      
+      # Display configuration for GUI support
+      - DISPLAY=${DISPLAY:-:0}
+      - QT_X11_NO_MITSHM=1
+      - LIBGL_ALWAYS_INDIRECT=1
+
+    volumes:
+      # Main workspace
+      - .:/workspace:delegated
+      
+      # MLflow artifacts
+      - ./mlruns:/workspace/mlruns
+      
+      # UV cache
+      - uv-cache:/root/.cache/uv
+      
+      # Computer Vision specific volumes
+      - ./models:/app/models:delegated
+      - ./weights:/app/weights:delegated
+      - ./data:/app/data:delegated
+      - ./videos:/workspace/videos:delegated
+      
+      # Ultralytics/YOLO cache
+      - yolo-cache:/root/.cache/ultralytics
+      
+      # Roboflow cache
+      - roboflow-cache:/root/.cache/roboflow
+      
+      # X11 socket for GUI (Linux/Unix only)
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ${HOME}/.Xauthority:/root/.Xauthority:rw
+
+    ports:
+      # Jupyter Lab
+      - "${HOST_JUPYTER_PORT:-8891}:8888"
+      
+      # TensorBoard
+      - "${HOST_TENSORBOARD_PORT:-6008}:6008"
+      
+      # Explainer Dashboard
+      - "${HOST_EXPLAINER_PORT:-8050}:8050"
+      
+      # Streamlit
+      - "${HOST_STREAMLIT_PORT:-8501}:8501"
+      
+      # Computer Vision specific ports
+      - "${HOST_CV_API_PORT:-8080}:8080"  # CV API server
+      - "${HOST_CV_STREAM_PORT:-8554}:8554"  # RTSP stream
+
+    command: >
+      bash -lc '
+        echo "[boot] Starting container: ${ENV_NAME:-docker_dev_template}";
+        echo "[boot] Activating uv environment...";
+        source /app/.venv/bin/activate;
+        echo "[boot] Environment activated - Python: $(which python)";
+        echo "[boot] UV available: $(uv --version)";
+        echo "[boot] Running GPU validation...";
+        python /app/validate_gpu.py || echo "GPU validation warning - check logs";
+        echo "[boot] Checking Computer Vision components...";
+        python /app/tests/test_cv.py || echo "CV check warning - check logs";
+        echo "[boot] Starting Jupyter Lab on port 8888...";
+        jupyter lab --ip=0.0.0.0 --port=8888 --allow-root 
+        --NotebookApp.token="${JUPYTER_TOKEN}" 
+        --NotebookApp.allow_origin="*" 
+        --NotebookApp.open_browser=false
+      '
+
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - |
+          python -c '
+          import torch, jax, cv2
+          from ultralytics import YOLO
+          assert torch.cuda.is_available()
+          assert any("gpu" in str(d).lower() for d in jax.devices())
+          assert cv2.__version__ is not None
+          print("All systems operational")
+          ' 2>/dev/null || exit 1
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 120s
+
+    labels:
+      - "com.docker.compose.project=${ENV_NAME:-docker_dev_template}"
+      - "com.docker.compose.service=datascience"
+      - "description=RTX 4090 GPU Dev Environment with Computer Vision (PyTorch+JAX+YOLO) - CUDA 12.4"
+
+  mlflow:
+    container_name: ${ENV_NAME:-docker_dev_template}_mlflow
+    image: ghcr.io/mlflow/mlflow:latest
+    command: >
+      mlflow server
+      --host 0.0.0.0
+      --port 5000
+      --backend-store-uri sqlite:///mlflow.db
+      --default-artifact-root /mlflow_artifacts
+    environment:
+      MLFLOW_EXPERIMENTS_DEFAULT_ARTIFACT_LOCATION: /mlflow_artifacts
+    volumes:
+      - ./mlruns:/mlflow_artifacts
+      - ./mlflow_db:/mlflow_db
+    ports:
+      - "${HOST_MLFLOW_PORT:-5000}:5000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:5000/health').raise_for_status()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  uv-cache:
+    driver: local
+  yolo-cache:
+    driver: local
+  roboflow-cache:
+    driver: local

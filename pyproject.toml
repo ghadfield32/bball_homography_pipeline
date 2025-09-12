@@ -1,9 +1,9 @@
 [project]
-name = "react_fastapi_railway"
+name = "docker_dev_template"
 version = "0.1.0"
-description = "Pytorch and Jax GPU docker container"
+description = "Hierarchical Bayesian modeling for baseball exit velocity data"
 authors = [
-  { name = "Geoffrey Hadfield" },
+  { name = "Marlins Data Science Team" },
 ]
 license = "MIT"
 readme = "README.md"
@@ -12,27 +12,10 @@ readme = "README.md"
 requires-python = ">=3.10,<3.13"
 
 dependencies = [
-  # Core web framework
-  "fastapi>=0.104.0",
-  "uvicorn[standard]>=0.24.0",
-  "python-dotenv>=1.0.0",
-
-  # Settings and validation
-  "pydantic>=2.0.0",
-  "pydantic-settings>=2.0.0",
-
-  # HTTP client and multipart parsing
-  "httpx>=0.24.0",
-  "python-multipart>=0.0.6",
-
-  # Data & ML basics
-  "numpy>=1.24.0",
-  "pandas>=2.1.0",
-  "scikit-learn>=1.3.0",
-  "mlflow>=2.8.0",
-
-  # (Your existing extras—keep if you still need them)
+  "pandas>=2.0",
+  "numpy>=1.20,<2",
   "matplotlib>=3.4.0",
+  "scikit-learn>=1.4.2",
   "pymc>=5.0.0",
   "arviz>=0.14.0",
   "statsmodels>=0.13.0",
@@ -42,34 +25,60 @@ dependencies = [
   "shap>=0.40.0",
   "xgboost>=1.5.0",
   "lightgbm>=3.3.0",
-  "catboost>=1.2.8,<1.3.0",
+  "catboost>=1.0.0",
   "scipy>=1.7.0",
   "shapash[report]>=2.3.0",
-  "shapiq>=0.1.0",
-  "explainerdashboard==0.5.1",
+  "shapiq>=1.3.0",
+  "explainerdashboard>=0.3.0",
   "ipywidgets>=8.0.0",
   "nutpie>=0.7.1",
   "numpyro>=0.18.0,<1.0.0",
-  "jax==0.6.0",
-  "jaxlib==0.6.0",
+  "jax>=0.4.23",
+  "jaxlib>=0.4.23",
   "pytensor>=2.18.3",
   "aesara>=2.9.4",
   "tqdm>=4.67.0",
   "pyarrow>=12.0.0",
-  "optuna>=3.0.0",
-  "optuna-integration[mlflow]>=0.2.0",
-  "omegaconf>=2.3.0,<2.4.0",
-  "hydra-core>=1.3.2,<1.4.0",
-  "aiosqlite>=0.19.0", 
-  "python-jose[cryptography]>=3.3.0",
-  "passlib[bcrypt]>=1.7.4",
-  "bcrypt==4.0.1",  # Pin bcrypt version to resolve warning
-  # Rate limiting
-  "fastapi-limiter>=0.1.5",
-  "aioredis>=2.0.0",
-  "httpx>=0.24.0",
-  "psutil>=5.0.0,<8.0.0",
-  "ipykernel>=6.25.0",
+  "streamlit>=1.20.0",
+  "sqlalchemy>=1.4",
+  "mysql-connector-python>=8.0",
+  "optuna>=4.3.0",
+  "bayesian-optimization>=1.2.0",
+  "pretty_errors>=1.2.0",
+  "gdown>=4.0.0",
+  "invoke>=2.2",
+  # ▶ Video download stack
+  #   - pytube main-branch until next PyPI release (optional fallback)
+  "pytube @ git+https://github.com/pytube/pytube",
+  "yt-dlp==2025.9.5",  # Pinned for stability
+  #   - optional convenience wrapper (does NOT install ffmpeg binary!)
+  "ffmpeg-python==0.2.0",  # Pinned for stability
+
+  # ▶ Computer Vision Stack
+  # Core CV libraries
+  "ultralytics==8.3.158",  # YOLO v8 - pinned for stability
+  "opencv-contrib-python-headless>=4.10.0",  # OpenCV with contrib modules
+  "roboflow==1.2.9",  # Roboflow API client - pinned for stability
+  
+  # Object tracking and supervision
+  "supervision>=0.17.0",  # Modern CV utilities and tracking
+  "lap>=0.4.0",  # Linear Assignment Problem solver for tracking
+  
+  # Image augmentation and processing
+  "albumentations>=1.3.0",  # Fast image augmentation
+  "imgaug>=0.4.0",  # Image augmentation library
+  "pillow>=10.0.0",  # Image processing
+  
+  # Video processing and download
+  "moviepy==2.2.1",  # Video editing - pinned for stability
+  "mlflow>=3.1.1,<4.0.0",
+  "optuna-integration[mlflow]>=4.4.0,<5.0.0",
+  
+  # PyTorch core libraries - platform specific with PEP-508 compliant syntax
+  # CUDA wheels for Windows/Linux, CPU for macOS
+"torch>=2.0.0",
+"torchvision>=0.15.0",
+"torchaudio>=2.0.0",
 ]
 
 [project.optional-dependencies]
@@ -79,11 +88,60 @@ dev = [
   "isort>=5.0.0",
   "flake8>=5.0.0",
   "mypy>=1.0.0",
-  "invoke>=2.2",
+  "pre-commit>=3.0.0",
 ]
 
 cuda = [
-  "cupy-cuda12x>=12.0.0",
+  "cupy-cuda12x>=12.0.0",  # For CUDA 12.x
+]
+
+basketball = [
+  # Additional basketball-specific packages
+  "sportsipy>=0.6.0",  # Sports statistics
+  "nba-api>=1.4.0",  # NBA API client
+]
+
+# ─── uv configuration ──────────────────────────────────────────
+[tool.uv]                   # uv reads this block
+index-strategy = "unsafe-best-match"
+
+# Define named indexes for PyTorch CUDA variants
+[[tool.uv.index]]
+name = "pytorch-cu121"
+url = "https://download.pytorch.org/whl/cu121"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu118"
+url = "https://download.pytorch.org/whl/cu118"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+# Removed unsupported option: torch-backend requires uv ≥0.5.3
+# To re-enable, first run: pip install -U uv>=0.5.3
+[tool.uv.pip]
+# (No unsupported keys here; configure only valid pip options.)
+
+# Map PyTorch dependencies to CUDA indexes for non-macOS platforms
+# Testing with CUDA 12.8
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+torchvision = [
+  { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+torchaudio = [
+  { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
 [tool.pytensor]
@@ -91,6 +149,3 @@ device    = "cuda"
 floatX    = "float32"
 allow_gc  = true
 optimizer = "fast_run"
-
-
-

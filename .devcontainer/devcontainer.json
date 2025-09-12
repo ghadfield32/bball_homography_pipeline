@@ -1,63 +1,88 @@
 {
-  "name": "cancer_bayes_iris_env_uv",
-  "dockerComposeFile": ["docker-compose.yml"],
+  "name": "docker_dev_template_rtx4090",
+  "dockerComposeFile": "../docker-compose.yml",
   "service": "datascience",
   "workspaceFolder": "/workspace",
   "shutdownAction": "stopCompose",
 
+  "overrideCommand": false,
+  "containerEnv": {
+    "CONTAINER_WORKSPACE_FOLDER": "/workspace",
+    "UV_PROJECT_ENVIRONMENT": "/app/.venv",
+    "VIRTUAL_ENV": "/app/.venv",
+    "PYTHONPATH": "/workspace",
+    "TERM": "xterm-256color"
+  },
+
+  "runArgs": [
+    "--gpus", "all",
+    "--name", "${localEnv:ENV_NAME:docker_dev_template}_datascience"
+  ],
+
   "customizations": {
     "vscode": {
+      "settings": {
+        "python.defaultInterpreterPath": "/app/.venv/bin/python",
+        "python.pythonPath": "/app/.venv/bin/python",
+        "python.terminal.activateEnvironment": true,
+        "python.terminal.activateEnvInCurrentTerminal": true,
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "terminal.integrated.profiles.linux": {
+          "bash": {
+            "path": "/bin/bash",
+            "args": ["-l"],
+            "env": {
+              "VIRTUAL_ENV": "/app/.venv",
+              "PATH": "/app/.venv/bin:${env:PATH}",
+              "UV_PROJECT_ENVIRONMENT": "/app/.venv",
+              "PYTHONPATH": "/workspace"
+            }
+          }
+        },
+        "jupyter.notebookFileRoot": "/workspace",
+        "jupyter.kernels.filter": [
+          {
+            "path": "/app/.venv/bin/python",
+            "type": "pythonEnvironment"
+          }
+        ]
+      },
       "extensions": [
         "ms-python.python",
-        "ms-python.vscode-pylance",
         "ms-toolsai.jupyter",
-        "ms-toolsai.jupyter-renderers",
-        "nvidia.nsight-vscode-edition"
-      ],
-      "settings": {
-        "telemetry.telemetryLevel": "off",
-        "python.telemetry.enabled": false,
-        "jupyter.telemetry.enabled": false,
-        "jupyter.experiments.enabled": false,
-        "update.mode": "manual",
-        "extensions.autoUpdate": false,
-        "extensions.autoCheckUpdates": false,
-        "remote.extensionKind": {
-          "ms-python.python": ["ui"],
-          "ms-python.vscode-pylance": ["ui"],
-          "ms-toolsai.jupyter": ["ui"],
-          "ms-toolsai.jupyter-renderers": ["ui"],
-          "nvidia.nsight-vscode-edition": ["ui"]
-        },
-        "python.defaultInterpreterPath": "/app/.venv/bin/python",
-        "jupyter.interactiveWindow.textEditor.executeSelection": true,
-        "jupyter.widgetScriptSources": ["jsdelivr.com", "unpkg.com"]
-      }
+        "ms-azuretools.vscode-docker",
+        "ms-python.flake8",
+        "ms-python.black-formatter"
+      ]
     }
   },
 
-  "containerEnv": {
-    "UV_PROJECT_ENVIRONMENT": "/app/.venv",
-    "NVIDIA_VISIBLE_DEVICES": "all",
-    "NVIDIA_DRIVER_CAPABILITIES": "compute,utility",
-    "CUDA_STACK": "pip-cuda",
-    "LD_PRELOAD": "/usr/lib/x86_64-linux-gnu/libjemalloc.so.2",
-    "MALLOC_ARENA_MAX": "1",
-    "MALLOC_TCACHE_MAX": "0",
-    "PYTORCH_NO_CUDA_MEMORY_CACHING": "1",
-    "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
-    "XLA_PYTHON_CLIENT_MEM_FRACTION": "0.25",
-    "XLA_PYTHON_CLIENT_ALLOCATOR": "platform",
-    "PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:512,expandable_segments:True"
+  "onCreateCommand": [
+    "bash", "-lc",
+    "echo 'onCreate: validating environment'; ls -la /app/.venv/bin/; which python || echo 'python not found in PATH'"
+  ],
+
+  "postCreateCommand": [
+    "bash", "-lc",
+    "set -e; source /app/.venv/bin/activate; python -c 'import sys; print(f\"python: {sys.executable}\")'; uv pip install -U ipykernel jupyter-client -q; python -m ipykernel install --user --name='uv_docker_dev_template' --display-name='Python (UV Environment)'; jupyter kernelspec list; python /app/tests/test_summary.py"
+  ],
+
+  "postStartCommand": [
+    "bash", "-lc",
+    "source /app/.venv/bin/activate; python --version; python -c 'import torch; print(f\"pytorch cuda: {torch.cuda.is_available()}\")' || echo 'pytorch test failed'; python /app/validate_gpu.py --quick || echo 'gpu validation completed with warnings'"
+  ],
+
+  "features": {},
+  "forwardPorts": [8888, 6008, 8050, 8501, 5000],
+  "portsAttributes": {
+    "8888": { "label": "Jupyter Lab", "onAutoForward": "notify" },
+    "6008": { "label": "TensorBoard", "onAutoForward": "silent" },
+    "8050": { "label": "Explainer Dashboard", "onAutoForward": "silent" },
+    "8501": { "label": "Streamlit", "onAutoForward": "silent" },
+    "5000": { "label": "MLflow", "onAutoForward": "silent" }
   },
 
-  "remoteEnv": {
-    "JUPYTER_ENABLE_LAB": "true",
-    "PATH": "${containerEnv:PATH}:/usr/local/cuda/bin"
-  },
-
-  "postCreateCommand": "/bin/sh -lc 'set -e; find .devcontainer -maxdepth 1 -name \"*.sh\" -exec sed -i \"s/\\r$//\" {} \\;; chmod +x .devcontainer/*.sh; bash .devcontainer/opening.sh'",
-  "postStartCommand": "/bin/sh -lc 'set -e; find .devcontainer -maxdepth 1 -name \"*.sh\" -exec sed -i \"s/\\r$//\" {} \\;; chmod +x .devcontainer/*.sh; bash .devcontainer/opening.sh --verify-only || true'"
+  "mounts": [
+    "source=docker_dev_template_uv_cache,target=/root/.cache/uv,type=volume"
+  ]
 }
-
-
