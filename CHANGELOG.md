@@ -5,7 +5,145 @@
 
 ---
 
-## [Current] CV Pipeline Enhancements Phase 2 - Tuning, Constraints, OCR, Testing - 2025-11-19
+## [Current] CV Pipeline Enhancements Phase 3 - API, Streaming, Shot Arc, Re-ID - 2025-11-19
+
+### 🎯 Objective
+Add production-ready API endpoints, real-time streaming, shot arc analysis, and visual re-identification for complete pipeline exposure.
+
+### ✅ Comprehensive Config Parameters
+
+**Modified File**: `api/src/cv/config.py` (+60 lines)
+
+Added configuration sections for all Phase 3 features:
+- Jersey OCR: `enable_jersey_ocr`, `jersey_ocr_type`, `jersey_ocr_confidence`
+- Shot Arc Analysis: `ball_model_id`, `arc_min_trajectory_points`, `arc_velocity_window_frames`
+- SigLIP Re-ID: `siglip_model_name`, `siglip_similarity_threshold`, `siglip_embedding_dim`
+- WebSocket Streaming: `websocket_host`, `websocket_port`, `streaming_frame_skip`
+- FastAPI: `api_host`, `api_port`, `api_workers`, `api_max_video_size_mb`
+- Batch Processing: `batch_size`, `max_concurrent_videos`
+- Caching: `enable_model_caching`, `cache_dir`, `embedding_cache_size`
+
+### ✅ FastAPI CV Endpoints
+
+**New File**: `api/src/cv/api_endpoints.py` (~400 lines)
+
+REST API for pipeline access:
+- `POST /process` - Upload video for async processing
+- `GET /jobs/{job_id}` - Get job status and progress
+- `GET /jobs/{job_id}/shots` - Get shot events for completed job
+- `GET /jobs/{job_id}/tracks` - Get tracking info
+- `POST /analyze/frame` - Analyze single frame
+- `GET /config` - Get current configuration
+- `GET /health` - Health check
+
+Usage:
+```bash
+uvicorn api.src.cv.api_endpoints:app --host 0.0.0.0 --port 8000
+```
+
+### ✅ Shot Arc Analysis Module
+
+**New File**: `api/src/cv/shot_arc.py` (~450 lines)
+
+Ball trajectory analysis:
+- `ShotArcAnalyzer` class with ball detection and tracking
+- `ArcMetrics` dataclass with release angle, entry angle, apex height, velocity
+- Parabolic curve fitting with R-squared validation
+- Trajectory smoothing and velocity computation
+- Scale estimation from ball size
+
+Key metrics computed:
+- Release angle (degrees)
+- Entry angle (degrees)
+- Apex height (pixels/feet)
+- Release velocity (pixels/frame or ft/s)
+
+Usage:
+```python
+from api.src.cv.shot_arc import create_shot_arc_analyzer
+
+analyzer = create_shot_arc_analyzer(cfg)
+metrics = analyzer.analyze_shot_arc(start_frame, end_frame, fps=30)
+print(f"Release angle: {metrics.release_angle}°")
+```
+
+### ✅ SigLIP Visual Re-Identification
+
+**New File**: `api/src/cv/siglip_reid.py` (~400 lines)
+
+Appearance-based re-identification:
+- `SigLIPReID` class using HuggingFace SigLIP model
+- `EmbeddingHistory` with temporal weighting
+- Cosine similarity matching
+- Track merging across camera cuts
+
+Features:
+- Embedding extraction from player crops
+- Similarity matrix computation
+- Lost track detection and matching
+- Configurable similarity threshold
+
+Usage:
+```python
+from api.src.cv.siglip_reid import create_siglip_reid
+
+reid = create_siglip_reid(cfg)
+reid.update(frame, tracked_dets, frame_idx)
+matches = reid.attempt_reidentification(new_track_ids, frame_idx)
+```
+
+### ✅ WebSocket Streaming
+
+**New File**: `api/src/cv/websocket_stream.py` (~350 lines)
+
+Real-time video processing:
+- `WebSocketStreamServer` class
+- Per-session state management
+- Frame-by-frame processing with immediate results
+- JSON command protocol (ping, reset, stats)
+
+Usage:
+```bash
+python -m api.src.cv.websocket_stream
+# Server starts on ws://localhost:8765
+```
+
+Client example (JavaScript):
+```javascript
+const ws = new WebSocket('ws://localhost:8765');
+ws.send(frameData);  // Send JPEG frame
+ws.onmessage = (e) => {
+    const result = JSON.parse(e.data);
+    // result.players, result.shot_event, etc.
+};
+```
+
+### 📊 Files Changed Summary
+
+| File | Action | Lines |
+|------|--------|-------|
+| `api/src/cv/config.py` | MODIFIED | +60 |
+| `api/src/cv/api_endpoints.py` | NEW | ~400 |
+| `api/src/cv/shot_arc.py` | NEW | ~450 |
+| `api/src/cv/siglip_reid.py` | NEW | ~400 |
+| `api/src/cv/websocket_stream.py` | NEW | ~350 |
+
+### ⚠️ New Dependencies
+
+Optional dependencies for Phase 3 features:
+```bash
+# For SigLIP re-ID
+pip install transformers torch
+
+# For WebSocket streaming
+pip install websockets
+
+# Already included: fastapi, uvicorn
+```
+
+---
+
+## [Previous] CV Pipeline Enhancements Phase 2 - Tuning, Constraints, OCR, Testing - 2025-11-19
 
 ### 🎯 Objective
 Enhance pipeline with basketball-specific tuning, semantic validation, jersey OCR, and test utilities.

@@ -156,6 +156,57 @@ class CVConfig:
     homography_proof_enable: bool = os.getenv("HOMOGRAPHY_PROOF_ENABLE", "1") == "1"
     homography_grid_step_ft: float = float(os.getenv("HOMOGRAPHY_GRID_STEP_FT", "5.0"))
 
+    # --- Jersey OCR configuration ---
+    enable_jersey_ocr: bool = os.getenv("ENABLE_JERSEY_OCR", "0") == "1"
+    jersey_ocr_type: str = os.getenv("JERSEY_OCR_TYPE", "easyocr")  # easyocr, paddleocr, none
+    jersey_ocr_confidence: float = float(os.getenv("JERSEY_OCR_CONFIDENCE", "0.5"))
+    jersey_number_region_top: float = float(os.getenv("JERSEY_REGION_TOP", "0.1"))
+    jersey_number_region_bottom: float = float(os.getenv("JERSEY_REGION_BOTTOM", "0.5"))
+
+    # --- Shot arc analysis (ball trajectory) ---
+    enable_shot_arc_analysis: bool = os.getenv("ENABLE_SHOT_ARC_ANALYSIS", "0") == "1"
+    ball_model_id: str = os.getenv("BALL_MODEL_ID", "basketball-detection/1")  # Roboflow ball model
+    ball_confidence_threshold: float = float(os.getenv("BALL_CONFIDENCE", "0.3"))
+    arc_min_trajectory_points: int = int(os.getenv("ARC_MIN_POINTS", "5"))
+    arc_velocity_window_frames: int = int(os.getenv("ARC_VELOCITY_WINDOW", "3"))
+    arc_angle_smoothing: int = int(os.getenv("ARC_ANGLE_SMOOTHING", "3"))
+
+    # --- SigLIP embeddings for visual re-ID ---
+    enable_siglip_reid: bool = os.getenv("ENABLE_SIGLIP_REID", "0") == "1"
+    siglip_model_name: str = os.getenv("SIGLIP_MODEL_NAME", "google/siglip-base-patch16-224")
+    siglip_similarity_threshold: float = float(os.getenv("SIGLIP_SIMILARITY_THRESHOLD", "0.85"))
+    siglip_embedding_dim: int = int(os.getenv("SIGLIP_EMBEDDING_DIM", "768"))
+    siglip_crop_padding: float = float(os.getenv("SIGLIP_CROP_PADDING", "0.1"))
+
+    # --- WebSocket streaming ---
+    enable_websocket_streaming: bool = os.getenv("ENABLE_WEBSOCKET_STREAMING", "0") == "1"
+    websocket_host: str = os.getenv("WEBSOCKET_HOST", "0.0.0.0")
+    websocket_port: int = int(os.getenv("WEBSOCKET_PORT", "8765"))
+    streaming_frame_skip: int = int(os.getenv("STREAMING_FRAME_SKIP", "1"))  # Process every Nth frame
+    streaming_buffer_size: int = int(os.getenv("STREAMING_BUFFER_SIZE", "30"))
+    streaming_quality: int = int(os.getenv("STREAMING_QUALITY", "80"))  # JPEG quality 1-100
+
+    # --- FastAPI endpoints ---
+    api_host: str = os.getenv("API_HOST", "0.0.0.0")
+    api_port: int = int(os.getenv("API_PORT", "8000"))
+    api_workers: int = int(os.getenv("API_WORKERS", "1"))
+    api_max_video_size_mb: int = int(os.getenv("API_MAX_VIDEO_SIZE_MB", "500"))
+    api_timeout_seconds: int = int(os.getenv("API_TIMEOUT_SECONDS", "300"))
+    api_cors_origins: str = os.getenv("API_CORS_ORIGINS", "*")
+
+    # --- Additional Roboflow models/datasets ---
+    court_keypoint_model_id: str = os.getenv("COURT_KEYPOINT_MODEL_ID", "basketball-court-keypoints/1")
+    rim_detection_model_id: str = os.getenv("RIM_DETECTION_MODEL_ID", "basketball-rim-detection/1")
+
+    # --- Batch processing ---
+    batch_size: int = int(os.getenv("BATCH_SIZE", "1"))
+    max_concurrent_videos: int = int(os.getenv("MAX_CONCURRENT_VIDEOS", "2"))
+
+    # --- Caching ---
+    enable_model_caching: bool = os.getenv("ENABLE_MODEL_CACHING", "1") == "1"
+    cache_dir: Path = Path(os.getenv("CACHE_DIR", "/tmp/bball_cv_cache"))
+    embedding_cache_size: int = int(os.getenv("EMBEDDING_CACHE_SIZE", "1000"))
+
 # ---- Helpers ----
 
 def ensure_dirs(cfg: CVConfig) -> None:
