@@ -1,7 +1,7 @@
 [project]
-name = "docker_dev_template"
+name = "bball_homography_pipeline_env"
 version = "0.1.0"
-description = "Hierarchical Bayesian modeling for baseball exit velocity data"
+description = "Hierarchical Bayesian modeling for baseball exit velocity data with Computer Vision"
 authors = [
   { name = "Marlins Data Science Team" },
 ]
@@ -12,73 +12,104 @@ readme = "README.md"
 requires-python = ">=3.10,<3.13"
 
 dependencies = [
+  # Core Data Science Stack
   "pandas>=2.0",
-  "numpy>=1.20,<2",
+  # "numpy>=1.20,<2",
+  "numpy>=1.26",
   "matplotlib>=3.4.0",
   "scikit-learn>=1.4.2",
-  "pymc>=5.0.0",
-  "arviz>=0.14.0",
-  "statsmodels>=0.13.0",
-  "jupyterlab>=3.0.0",
+  "scipy>=1.7.0",
   "seaborn>=0.11.0",
   "tabulate>=0.9.0",
-  "shap>=0.40.0",
+  "pyarrow>=12.0.0",
+
+  # Bayesian Modeling Stack
+  # "pymc>=5.0.0",
+  # "pymc>=5.16.0",
+  "pymc>=5.20.0",
+  "arviz>=0.14.0",
+  "statsmodels>=0.13.0",
+  "nutpie>=0.7.1",
+  "numpyro>=0.18.0,<1.0.0",
+  # "pytensor>=2.18.3",
+  # "pytensor>=2.25.0",
+  "pytensor>=2.25.0", 
+  # "aesara>=2.9.4",
+
+  # Machine Learning Stack
   "xgboost>=1.5.0",
   "lightgbm>=3.3.0",
   "catboost>=1.0.0",
-  "scipy>=1.7.0",
+  "shap>=0.40.0",
   "shapash[report]>=2.3.0",
   "shapiq>=1.3.0",
   "explainerdashboard>=0.3.0",
+  "optuna>=4.3.0",
+  "bayesian-optimization>=1.2.0",
+
+  # Development and Jupyter Stack
+  "jupyterlab>=3.0.0",
   "ipywidgets>=8.0.0",
-  "nutpie>=0.7.1",
-  "numpyro>=0.18.0,<1.0.0",
-  "jax>=0.4.23",
-  "jaxlib>=0.4.23",
-  "pytensor>=2.18.3",
-  "aesara>=2.9.4",
   "tqdm>=4.67.0",
-  "pyarrow>=12.0.0",
+  "pretty_errors>=1.2.0",
+
+  # MLflow and Experiment Tracking
+  "mlflow>=3.1.1,<4.0.0",
+  "optuna-integration[mlflow]>=4.4.0,<5.0.0",
+
+  # Web and Database Stack  
   "streamlit>=1.20.0",
   "sqlalchemy>=1.4",
   "mysql-connector-python>=8.0",
-  "optuna>=4.3.0",
-  "bayesian-optimization>=1.2.0",
-  "pretty_errors>=1.2.0",
+
+  # Utilities
   "gdown>=4.0.0",
   "invoke>=2.2",
-  # ▶ Video download stack
-  #   - pytube main-branch until next PyPI release (optional fallback)
-  "pytube @ git+https://github.com/pytube/pytube",
-  "yt-dlp==2025.9.5",  # Pinned for stability
-  #   - optional convenience wrapper (does NOT install ffmpeg binary!)
-  "ffmpeg-python==0.2.0",  # Pinned for stability
+  "pydantic>=2.0.0",
+  "pydantic-settings>=2.0.0",
 
-  # ▶ Computer Vision Stack
+  # ▶ Computer Vision Stack - INTEGRATED
   # Core CV libraries
   "ultralytics==8.3.158",  # YOLO v8 - pinned for stability
-  "opencv-contrib-python-headless>=4.10.0",  # OpenCV with contrib modules
+  "opencv-contrib-python-headless>=4.10.0",  # OpenCV with contrib modules, headless for Docker
   "roboflow==1.2.9",  # Roboflow API client - pinned for stability
   
   # Object tracking and supervision
-  "supervision>=0.17.0",  # Modern CV utilities and tracking
+  # "supervision>=0.17.0",  # Modern CV utilities and tracking
   "lap>=0.4.0",  # Linear Assignment Problem solver for tracking
   
   # Image augmentation and processing
   "albumentations>=1.3.0",  # Fast image augmentation
   "imgaug>=0.4.0",  # Image augmentation library
   "pillow>=10.0.0",  # Image processing
-  
-  # Video processing and download
+
+  # ▶ Video processing and download stack
   "moviepy==2.2.1",  # Video editing - pinned for stability
-  "mlflow>=3.1.1,<4.0.0",
-  "optuna-integration[mlflow]>=4.4.0,<5.0.0",
+  # pytube from PyPI (stable release) - was git+https://github.com/pytube/pytube (unreliable)
+  "pytube>=15.0.0",  # YouTube download library
+  "yt-dlp==2025.9.5",  # Video download - pinned for stability (more reliable alternative)
+  # optional convenience wrapper (does NOT install ffmpeg binary!)
+  "ffmpeg-python==0.2.0",  # FFmpeg Python wrapper - pinned for stability
+
+  # ▶ JAX Integration (already in existing container)
+  "jax>=0.4.23",
+  "jaxlib>=0.4.23",
+
+  # ▶ PyTorch Integration - platform specific with PEP-508 compliant syntax
+  # Note: Actual PyTorch installation handled in Dockerfile for proper CUDA support
+  # "torch>=2.0.0",
+  # "torchvision>=0.15.0", 
+  # "torchaudio>=2.0.0",
   
-  # PyTorch core libraries - platform specific with PEP-508 compliant syntax
-  # CUDA wheels for Windows/Linux, CPU for macOS
-"torch>=2.0.0",
-"torchvision>=0.15.0",
-"torchaudio>=2.0.0",
+  # --- Roboflow Inference (GPU) + ONNX Runtime (GPU) ---
+  "supervision>=0.26,<0.27", # match current ecosystem
+  "inference>=0.61",  # GPU Inference client (NumPy 2.x line)
+
+  # NOTE: sports package removed from build - GitHub returning 500 errors
+  # Install manually after container starts with:
+  #   uv pip install git+https://github.com/roboflow/sports.git@bb203feb8f538e5f65c9823c3b909e01d4d0f4f0
+  # Or use postCreateCommand in devcontainer.json
+
 ]
 
 [project.optional-dependencies]
@@ -102,8 +133,12 @@ basketball = [
 ]
 
 # ─── uv configuration ──────────────────────────────────────────
-[tool.uv]                   # uv reads this block
-index-strategy = "unsafe-best-match"
+[tool.uv]
+# Avoid broken wheels; build these from sdist if needed
+no-binary-package = ["pydot", "seaborn", "explainerdashboard", "pillow"]
+
+
+
 
 # Define named indexes for PyTorch CUDA variants
 [[tool.uv.index]]
@@ -126,22 +161,19 @@ name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
-# Removed unsupported option: torch-backend requires uv ≥0.5.3
-# To re-enable, first run: pip install -U uv>=0.5.3
 [tool.uv.pip]
-# (No unsupported keys here; configure only valid pip options.)
+# Configure UV pip behavior for optimal package resolution
 
 # Map PyTorch dependencies to CUDA indexes for non-macOS platforms
-# Testing with CUDA 12.8
 [tool.uv.sources]
 torch = [
-  { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+  { index = "pytorch-cu124", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 torchvision = [
-  { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+  { index = "pytorch-cu124", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 torchaudio = [
-  { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+  { index = "pytorch-cu124", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
 [tool.pytensor]
@@ -149,3 +181,4 @@ device    = "cuda"
 floatX    = "float32"
 allow_gc  = true
 optimizer = "fast_run"
+

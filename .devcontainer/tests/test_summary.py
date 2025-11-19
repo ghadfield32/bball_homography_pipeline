@@ -15,7 +15,7 @@ def section(t):
 def test_structure() -> bool:
     section("STRUCTURE")
     expected = [
-        '/workspace/docker-compose.yml',
+        '/workspace/.devcontainer/docker-compose.yml',  # MOVED FROM ROOT
         '/workspace/pyproject.toml',
         '/workspace/.devcontainer/devcontainer.json',
         '/workspace/.devcontainer/Dockerfile',

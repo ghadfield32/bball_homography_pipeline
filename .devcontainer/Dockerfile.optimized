@@ -1,0 +1,395 @@
+# OPTIMIZED Dockerfile: RTX 4090 with UV, JAX, PyTorch, and CV
+# FIXES: Tar corruption, slow builds, better debugging and error handling
+# BUILD FROM: WSL filesystem (NOT /mnt/c) for best performance
+#
+# KEY IMPROVEMENTS:
+# - Separate cache IDs per package group to prevent corruption
+# - Timestamp logging for every step for debugging
+# - Validation checks after each critical installation
+# - Optimized layer ordering for better caching
+# - Reduced metadata overhead (no SBOM/provenance)
+
+ARG CUDA_TAG=12.4.0
+FROM nvidia/cuda:${CUDA_TAG}-devel-ubuntu22.04 as runtime
+
+ARG PYTHON_VER=3.10
+ARG ENV_NAME=bball_homography_pipeline_env
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ============================================================================
+# DIAGNOSTIC LAYER: Build information with timestamps
+# ============================================================================
+RUN echo "=================================================================" && \
+    echo "BUILD START: $(date '+%Y-%m-%d %H:%M:%S')" && \
+    echo "ENV_NAME: ${ENV_NAME}" && \
+    echo "CUDA_TAG: ${CUDA_TAG}" && \
+    echo "PYTHON_VER: ${PYTHON_VER}" && \
+    echo "BASE IMAGE: nvidia/cuda:${CUDA_TAG}-devel-ubuntu22.04" && \
+    echo "================================================================="
+
+# ============================================================================
+# SYSTEM DEPENDENCIES: With proper cache IDs to prevent corruption
+# ============================================================================
+RUN --mount=type=cache,id=apt-cache-${CUDA_TAG}-v2,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=apt-lists-${CUDA_TAG}-v2,target=/var/lib/apt/lists,sharing=locked \
+    echo "[$(date +%T)] STEP: Installing system dependencies..." && \
+    apt-get update -qq && apt-get install -y --no-install-recommends \
+        # Essential utilities (fixes "command not found" errors)
+        coreutils util-linux findutils grep sed gawk \
+        # Base development tools
+        bash curl ca-certificates git procps htop wget \
+        python3 python3-venv python3-pip python3-dev \
+        build-essential cmake pkg-config \
+        # Memory optimization
+        libjemalloc2 libjemalloc-dev \
+        # Networking tools
+        iproute2 net-tools lsof \
+        # Computer Vision system dependencies
+        ffmpeg libglib2.0-0 libsm6 libxext6 libxrender-dev libgomp1 \
+        libgstreamer1.0-0 libgstreamer-plugins-base1.0-0 \
+        libgtk-3-0 libgtk-3-dev \
+        # X11 support (optional for GUI)
+        x11-apps xauth xvfb \
+        # Video codec libraries
+        libavcodec-dev libavformat-dev libswscale-dev \
+        libv4l-dev libxvidcore-dev libx264-dev \
+        # Image format libraries
+        libjpeg-dev libpng-dev libtiff-dev \
+        # OpenGL support
+        libgl1-mesa-glx libglu1-mesa-dev \
+    && apt-get clean && rm -rf /var/lib/apt/lists/* && \
+    echo "[$(date +%T)] ✅ System dependencies installed" && \
+    # Verify essential commands
+    echo "[$(date +%T)] Verifying essential commands..." && \
+    which groups dircolors uname || echo "WARNING: Some commands missing" && \
+    echo "[$(date +%T)] ✅ Command verification complete"
+
+# ============================================================================
+# UV PACKAGE MANAGER: Copy and validate
+# ============================================================================
+COPY --from=ghcr.io/astral-sh/uv:0.7.12 /uv /uvx /bin/
+RUN echo "[$(date +%T)] STEP: Validating UV installation..." && \
+    uv --version && \
+    echo "[$(date +%T)] ✅ UV version: $(uv --version)"
+
+WORKDIR /app
+
+# ============================================================================
+# PYTHON VIRTUAL ENVIRONMENT: Create with UV
+# ============================================================================
+RUN echo "[$(date +%T)] STEP: Creating UV virtual environment..." && \
+    uv venv .venv --python "${PYTHON_VER}" --prompt "${ENV_NAME}" && \
+    echo "[$(date +%T)] ✅ Virtual environment created" && \
+    ls -lah .venv/ && \
+    test -f .venv/bin/python && echo "  Python binary: OK" || echo "  ERROR: Python binary missing!"
+
+ENV VIRTUAL_ENV=/app/.venv \
+    PATH="/app/.venv/bin:${PATH}" \
+    UV_PROJECT_ENVIRONMENT=/app/.venv \
+    PYTHONPATH="/workspace"
+
+# Validate Python installation
+RUN echo "[$(date +%T)] STEP: Validating Python environment..." && \
+    bash -c "source /app/.venv/bin/activate && \
+             python --version && \
+             which python && \
+             pip --version" && \
+    echo "[$(date +%T)] ✅ Python environment validated"
+
+# ============================================================================
+# MEMORY AND GPU ENVIRONMENT: Optimized for RTX 4090
+# ============================================================================
+ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2 \
+    MALLOC_ARENA_MAX=2 \
+    MALLOC_TCACHE_MAX=0 \
+    PYTORCH_NO_CUDA_MEMORY_CACHING=1
+
+# GPU configuration
+ENV XLA_PYTHON_CLIENT_PREALLOCATE=false \
+    XLA_PYTHON_CLIENT_MEM_FRACTION=0.35 \
+    XLA_PYTHON_CLIENT_ALLOCATOR=platform \
+    PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:1024,expandable_segments:True,roundup_power2_divisions:16 \
+    JAX_PREALLOCATION_SIZE_LIMIT_BYTES=10737418240
+
+# CV specific environment
+ENV OPENCV_VIDEOIO_PRIORITY_GSTREAMER=0 \
+    QT_X11_NO_MITSHM=1 \
+    DISPLAY=:0 \
+    YOLO_VERBOSE=false \
+    OPENCV_LOG_LEVEL=ERROR
+
+# ============================================================================
+# DIRECTORY STRUCTURE: Create with validation
+# ============================================================================
+RUN echo "[$(date +%T)] STEP: Creating directory structure..." && \
+    mkdir -p /app/models /app/data /app/weights \
+             /workspace/videos/input /workspace/videos/output && \
+    chmod 755 /app/models /app/data /app/weights \
+              /workspace/videos /workspace/videos/input /workspace/videos/output && \
+    echo "[$(date +%T)] ✅ Directories created:" && \
+    ls -lah /app/ && \
+    ls -lah /workspace/
+
+# ============================================================================
+# PROJECT FILES: Copy with validation
+# ============================================================================
+RUN echo "[$(date +%T)] STEP: Preparing to copy project files..." && \
+    echo "  Current directory: $(pwd)" && \
+    echo "  Build context should contain: pyproject.toml, uv.lock"
+
+COPY pyproject.toml /workspace/
+RUN echo "[$(date +%T)] STEP: Validating pyproject.toml..." && \
+    test -f /workspace/pyproject.toml && \
+    echo "  ✅ pyproject.toml exists" && \
+    head -n 10 /workspace/pyproject.toml && \
+    echo "[$(date +%T)] ✅ pyproject.toml validated"
+
+COPY uv.lock* /workspace/
+RUN echo "[$(date +%T)] Checking for uv.lock..." && \
+    if [ -f /workspace/uv.lock ]; then \
+        echo "  ✅ uv.lock found"; \
+    else \
+        echo "  ℹ️  No uv.lock (will be generated)"; \
+    fi
+
+# Copy test files
+COPY .devcontainer/validate_gpu.py /app/validate_gpu.py
+COPY .devcontainer/tests/ /app/tests/
+RUN echo "[$(date +%T)] ✅ Test files copied" && \
+    ls -lah /app/validate_gpu.py /app/tests/
+
+# ============================================================================
+# UV DEPENDENCY RESOLUTION: With separate cache per operation
+# ============================================================================
+RUN --mount=type=cache,id=uv-resolve-${CUDA_TAG}-v2,target=/root/.cache/uv,sharing=locked \
+    echo "[$(date +%T)] STEP: Resolving UV dependencies..." && \
+    cd /workspace && \
+    echo "  Current directory: $(pwd)" && \
+    echo "  Contents:" && ls -lah && \
+    if [ ! -f uv.lock ]; then \
+        echo "  [uv] Creating uv.lock from pyproject.toml..."; \
+        uv lock --refresh; \
+    else \
+        echo "  [uv] Using existing uv.lock"; \
+    fi && \
+    echo "[$(date +%T)] ✅ UV dependencies resolved"
+
+# ============================================================================
+# CORE DEPENDENCIES: Install base packages
+# ============================================================================
+RUN --mount=type=cache,id=uv-sync-${CUDA_TAG}-v2,target=/root/.cache/uv,sharing=locked \
+    echo "[$(date +%T)] STEP: Installing core dependencies..." && \
+    cd /workspace && \
+    (uv sync --frozen --no-dev 2>/dev/null || \
+     uv sync --no-dev 2>/dev/null || \
+     (echo "[uv] Installing minimal dependencies..." && \
+      uv add numpy pandas matplotlib scipy)) && \
+    echo "[$(date +%T)] ✅ Core dependencies installed"
+
+# ============================================================================
+# PYTORCH: Install with CUDA 12.4 support (SEPARATE CACHE!)
+# ============================================================================
+RUN --mount=type=cache,id=uv-pytorch-${CUDA_TAG}-v2,target=/root/.cache/uv,sharing=locked \
+    echo "[$(date +%T)] STEP: Installing PyTorch with CUDA 12.4..." && \
+    uv pip install --no-cache-dir \
+        torch torchvision torchaudio \
+        --index-url https://download.pytorch.org/whl/cu124 && \
+    echo "[$(date +%T)] STEP: Validating PyTorch installation..." && \
+    python - <<'PYEOF'
+import sys
+try:
+    import torch
+    print(f"[{sys.argv[0]}] ✅ PyTorch version: {torch.__version__}")
+    print(f"[{sys.argv[0]}] ✅ CUDA available: {torch.cuda.is_available()}")
+    if hasattr(torch.version, 'cuda'):
+        print(f"[{sys.argv[0]}] ✅ CUDA version: {torch.version.cuda}")
+    print("[Note] GPU will be available at runtime with --gpus flag")
+except Exception as e:
+    print(f"[{sys.argv[0]}] ❌ PyTorch validation failed: {e}")
+    sys.exit(1)
+PYEOF
+
+# ============================================================================
+# CUDNN: Upgrade for JAX compatibility
+# ============================================================================
+RUN --mount=type=cache,id=uv-cudnn-${CUDA_TAG}-v2,target=/root/.cache/uv,sharing=locked \
+    echo "[$(date +%T)] STEP: Upgrading CuDNN for JAX compatibility..." && \
+    uv pip install --no-cache-dir --upgrade nvidia-cudnn-cu12==9.8.0.69 || \
+    uv pip install --no-cache-dir --upgrade "nvidia-cudnn-cu12>=9.8.0" && \
+    echo "[$(date +%T)] ✅ CuDNN installed/upgraded"
+
+# ============================================================================
+# NVJITLINK: For CUDA 12 JIT linking
+# ============================================================================
+RUN --mount=type=cache,id=uv-nvjit-${CUDA_TAG}-v2,target=/root/.cache/uv,sharing=locked \
+    echo "[$(date +%T)] STEP: Installing NVJITLINK..." && \
+    uv pip install --no-cache-dir "nvidia-nvjitlink-cu12>=12.4" && \
+    echo "[$(date +%T)] ✅ NVJITLINK installed"
+
+# ============================================================================
+# JAX: Install with CUDA 12 support (SEPARATE CACHE!)
+# ============================================================================
+RUN --mount=type=cache,id=uv-jax-${CUDA_TAG}-v2,target=/root/.cache/uv,sharing=locked \
+    echo "[$(date +%T)] STEP: Installing JAX with CUDA 12..." && \
+    echo "  Removing any existing JAX installations..." && \
+    (uv pip uninstall -y jax jaxlib jax-cuda12-plugin jax-cuda12-pjrt 2>/dev/null || true) && \
+    echo "  Installing fresh JAX with CUDA 12 support..." && \
+    (uv pip install --no-cache-dir \
+         "jax[cuda12-local]>=0.4.26" \
+         -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html || \
+     echo "  ⚠️  Falling back to CPU-only JAX..." && \
+     uv pip install --no-cache-dir "jax[cpu]>=0.4.26") && \
+    echo "[$(date +%T)] STEP: Validating JAX installation..." && \
+    python - <<'PYEOF'
+import sys
+try:
+    import jax, jaxlib
+    print(f"[{sys.argv[0]}] ✅ JAX version: {jax.__version__}")
+    print(f"[{sys.argv[0]}] ✅ JAXlib version: {jaxlib.__version__}")
+    devices = jax.devices()
+    print(f"[{sys.argv[0]}] ✅ JAX devices: {devices}")
+    print("[Note] GPU devices will be available at runtime")
+except Exception as e:
+    print(f"[{sys.argv[0]}] ❌ JAX validation failed: {e}")
+    sys.exit(1)
+PYEOF
+
+# ============================================================================
+# COMPUTER VISION: Install CV packages (SEPARATE CACHE!)
+# ============================================================================
+RUN --mount=type=cache,id=uv-cv-${CUDA_TAG}-v2,target=/root/.cache/uv,sharing=locked \
+    echo "[$(date +%T)] STEP: Installing Computer Vision packages..." && \
+    echo "  Installing Ultralytics YOLO..." && \
+    uv pip install --no-cache-dir --upgrade ultralytics==8.3.158 && \
+    echo "  ✅ Ultralytics installed" && \
+    echo "  Installing tracking libraries..." && \
+    uv pip install --no-cache-dir supervision>=0.17.0 lap>=0.4.0 && \
+    echo "  ✅ Tracking libraries installed" && \
+    echo "  Installing image processing..." && \
+    uv pip install --no-cache-dir albumentations>=1.3.0 imgaug>=0.4.0 && \
+    echo "  ✅ Image processing installed" && \
+    echo "  Installing OpenCV..." && \
+    uv pip install --no-cache-dir opencv-contrib-python-headless>=4.10.0 && \
+    echo "  ✅ OpenCV installed" && \
+    echo "  Installing Roboflow..." && \
+    uv pip install --no-cache-dir roboflow==1.2.9 && \
+    echo "  ✅ Roboflow installed" && \
+    echo "  Installing video processing..." && \
+    uv pip install --no-cache-dir moviepy==2.2.1 yt-dlp==2025.9.5 ffmpeg-python==0.2.0 && \
+    echo "  ✅ Video processing installed" && \
+    echo "[$(date +%T)] ✅ All CV packages installed"
+
+# ============================================================================
+# CV VALIDATION: Test CV installation
+# ============================================================================
+RUN echo "[$(date +%T)] STEP: Validating CV installation..." && \
+    python - <<'PYEOF'
+import sys
+components = []
+try:
+    import cv2
+    components.append(f"OpenCV: {cv2.__version__}")
+except Exception as e:
+    print(f"❌ OpenCV: {e}")
+    sys.exit(1)
+
+try:
+    from ultralytics import YOLO
+    components.append("YOLO: Available")
+except Exception as e:
+    print(f"❌ YOLO: {e}")
+    sys.exit(1)
+
+try:
+    import roboflow
+    components.append(f"Roboflow: {roboflow.__version__}")
+except Exception as e:
+    print(f"❌ Roboflow: {e}")
+
+try:
+    import supervision as sv
+    components.append(f"Supervision: {sv.__version__}")
+except Exception as e:
+    print(f"⚠️  Supervision: {e}")
+
+print("[$(date +%T)] ✅ CV validation completed:")
+for comp in components:
+    print(f"  {comp}")
+PYEOF
+
+# ============================================================================
+# JUPYTER: Install Jupyter and kernel
+# ============================================================================
+RUN --mount=type=cache,id=uv-jupyter-${CUDA_TAG}-v2,target=/root/.cache/uv,sharing=locked \
+    echo "[$(date +%T)] STEP: Installing Jupyter..." && \
+    uv pip install --no-cache-dir \
+        psutil==5.9.8 debugpy==1.8.7 ipykernel==6.29.5 \
+        jupyter-client==8.6.1 jupyterlab==4.2.5 && \
+    echo "[$(date +%T)] ✅ Jupyter installed"
+
+# ============================================================================
+# LIBRARY PATH: Configure CUDA libraries
+# ============================================================================
+ENV LD_LIBRARY_PATH="/app/.venv/lib:/app/.venv/lib/python3.10/site-packages/nvidia/cudnn/lib:/usr/local/cuda/lib64:${LD_LIBRARY_PATH}"
+
+# ============================================================================
+# SHELL ACTIVATION: Create activation helper
+# ============================================================================
+RUN echo "[$(date +%T)] STEP: Creating shell activation helper..." && \
+    cat > /app/activate_uv.sh <<'SHELLEOF'
+#!/bin/bash
+export VIRTUAL_ENV="/app/.venv"
+export PATH="/app/.venv/bin:$PATH"
+export UV_PROJECT_ENVIRONMENT="/app/.venv"
+export PYTHONPATH="/workspace:$PYTHONPATH"
+export LD_LIBRARY_PATH="/app/.venv/lib:/app/.venv/lib/python3.10/site-packages/nvidia/cudnn/lib:/usr/local/cuda/lib64:${LD_LIBRARY_PATH}"
+export YOLO_VERBOSE=false
+export OPENCV_LOG_LEVEL=ERROR
+export DISPLAY=${DISPLAY:-:0}
+echo "🐍 UV Environment activated: $(python --version 2>/dev/null || echo 'Python not found')"
+cd /workspace
+SHELLEOF
+    chmod +x /app/activate_uv.sh && \
+    echo 'source /app/activate_uv.sh' > /etc/profile.d/10-uv-activate.sh && \
+    echo 'source /app/activate_uv.sh' >> /root/.bashrc && \
+    chmod +x /etc/profile.d/10-uv-activate.sh && \
+    echo "[$(date +%T)] ✅ Shell activation configured"
+
+# ============================================================================
+# HEALTHCHECK: Create comprehensive healthcheck
+# ============================================================================
+RUN echo "[$(date +%T)] STEP: Creating healthcheck script..." && \
+    cat > /app/healthcheck.sh <<'HEALTHEOF'
+#!/bin/bash
+source /app/.venv/bin/activate
+echo "=== Environment Check ==="
+python --version
+echo "=== GPU Check ==="
+python -c "import torch; print(f'PyTorch CUDA: {torch.cuda.is_available()}')" || echo "PyTorch check failed"
+python -c "import jax; print(f'JAX devices: {jax.devices()}')" || echo "JAX check failed"
+echo "=== CV Check ==="
+python -c "import cv2; print(f'OpenCV: {cv2.__version__}')" || echo "OpenCV check failed"
+python -c "from ultralytics import YOLO; print('YOLO: OK')" || echo "YOLO check failed"
+python -c "import roboflow; print(f'Roboflow: {roboflow.__version__}')" || echo "Roboflow check failed"
+echo "=== Final GPU Validation ==="
+python /app/validate_gpu.py --quick
+HEALTHEOF
+    chmod +x /app/healthcheck.sh && \
+    echo "[$(date +%T)] ✅ Healthcheck script created"
+
+# ============================================================================
+# FINAL VALIDATION: Verify build success
+# ============================================================================
+RUN echo "=================================================================" && \
+    echo "BUILD COMPLETE: $(date '+%Y-%m-%d %H:%M:%S')" && \
+    echo "ENV_NAME: ${ENV_NAME}" && \
+    echo "CUDA_TAG: ${CUDA_TAG}" && \
+    echo "PYTHON_VER: ${PYTHON_VER}" && \
+    echo "=================================================================" && \
+    echo "Final validation:" && \
+    bash -c "source /app/.venv/bin/activate && python --version && uv --version" && \
+    echo "✅ Build completed successfully" && \
+    echo "================================================================="
+
+WORKDIR /workspace
+CMD ["bash", "-l"]

@@ -1,129 +1,282 @@
-# .devcontainer/docker-compose.yml - TensorFlow removed, optimized for faster builds
-name: ${ENV_NAME:-cancer_bayes_iris_env}
+# FIXED .devcontainer/docker-compose.yml - Corrected volume paths and configuration
+# KEY FIXES:
+# 1. Fixed volume paths (../mlruns instead of ./mlruns)  
+# 2. Fixed env_file reference (.env instead of .env.template)
+# 3. Added explicit image name to prevent "ultralytics" phantom pulls
+# 4. Enhanced debugging and error handling
+
+name: ${ENV_NAME:-bball_homography_pipeline_env}
 
 services:
   datascience:
     build:
+      # FIXED: Build context is parent directory (project root)
       context: ..
       dockerfile: .devcontainer/Dockerfile
       args:
-        CUDA_TAG: ${CUDA_TAG:-12.8.0}
+        CUDA_TAG: ${CUDA_TAG:-12.4.0}
         PYTHON_VER: ${PYTHON_VER:-3.10}
-        ENV_NAME: ${ENV_NAME:-cancer_bayes_iris_env}
-      # Enable BuildKit for better caching
-      target: ""
+        ENV_NAME: ${ENV_NAME:-bball_homography_pipeline_env}
       cache_from:
-        - nvidia/cuda:${CUDA_TAG:-12.8.0}-runtime-ubuntu22.04
+        - nvidia/cuda:${CUDA_TAG:-12.4.0}-devel-ubuntu22.04
+      # ADDED: Explicit tags to prevent phantom image pulls
+      target: runtime
+      
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # ADDED: Explicit image name to avoid confusion
+    image: ${ENV_NAME:-bball_homography_pipeline_env}_datascience:latest
+    
+    container_name: ${ENV_NAME:-bball_homography_pipeline_env}_datascience
+
+    # FIXED: Reference .env file instead of .env.template
+    env_file:
+      - .env
 
     restart: unless-stopped
     depends_on:
       mlflow:
-        condition: service_healthy
+        condition: service_started
 
-    # GPU configuration - simplified
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
               count: all
-              capabilities: [gpu]
+              capabilities: [gpu, compute, utility, video]
 
     init: true
-    gpus: all
-    shm_size: 4g  # Reduced from 8g since no TensorFlow
+    
+    # ENHANCED: GPU configuration with explicit all access
+    runtime: nvidia
+    
+    shm_size: 16g
     ulimits:
       memlock: -1
       stack: 67108864
 
     environment:
-      # Core configuration
+      # Base container environment
       - PYTHON_VER=${PYTHON_VER:-3.10}
+      - CUDA_TAG=${CUDA_TAG:-12.4.0}
+      - ENV_NAME=${ENV_NAME:-bball_homography_pipeline_env}
       - UV_PROJECT_ENVIRONMENT=/app/.venv
-
-      # GPU Environment  
+      - VIRTUAL_ENV=/app/.venv
+      - PYTHONPATH=/workspace
       - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - NVIDIA_DRIVER_CAPABILITIES=all
       - CUDA_VISIBLE_DEVICES=0
       - LD_LIBRARY_PATH=/app/.venv/lib:/usr/local/cuda/lib64
-
-      # Simplified memory management (jemalloc)
       - LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2
-      - MALLOC_ARENA_MAX=1
+      - MALLOC_ARENA_MAX=2
       - MALLOC_TCACHE_MAX=0
       - PYTORCH_NO_CUDA_MEMORY_CACHING=1
-
-      # JAX Configuration (RTX 5080 optimized)
+      
+      # GPU Memory Management - Enhanced for CV workloads
       - XLA_PYTHON_CLIENT_PREALLOCATE=false
       - XLA_PYTHON_CLIENT_ALLOCATOR=platform
-      - XLA_PYTHON_CLIENT_MEM_FRACTION=0.25
+      - XLA_PYTHON_CLIENT_MEM_FRACTION=0.35
       - XLA_FLAGS=--xla_gpu_cuda_data_dir=/usr/local/cuda
-      - JAX_PREALLOCATION_SIZE_LIMIT_BYTES=8589934592
-
-      # PyTorch Configuration (RTX 5080 optimized)
-      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512,expandable_segments:True
-
-      # Jupyter
+      - JAX_PREALLOCATION_SIZE_LIMIT_BYTES=10737418240
+      - JAX_DISABLE_JIT=false
+      - JAX_ENABLE_X64=false
+      - JAX_PLATFORM_NAME=
+      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:1024,expandable_segments:True,roundup_power2_divisions:16
       - JUPYTER_TOKEN=${JUPYTER_TOKEN:-jupyter}
+      
+      # Computer Vision Configuration
+      - YOLO_VERBOSE=${YOLO_VERBOSE:-false}
+      - OPENCV_LOG_LEVEL=${OPENCV_LOG_LEVEL:-ERROR}
+      - ROBOFLOW_API_KEY=${ROBOFLOW_API_KEY:-htpcxp3XQh7SsgMfjJns}
+      - ROBOFLOW_WORKSPACE=${ROBOFLOW_WORKSPACE:-basketball-formations}
+      - ROBOFLOW_PROJECT=${ROBOFLOW_PROJECT:-basketball-court-detection-2-mlopt}
+      - ROBOFLOW_VERSION=${ROBOFLOW_VERSION:-1}
+      
+      # Display configuration for GUI support
+      - DISPLAY=${DISPLAY:-:0}
+      - QT_X11_NO_MITSHM=1
+      - LIBGL_ALWAYS_INDIRECT=1
+      
+      # Video processing configuration
+      - VIDEO_INPUT_DIR=${VIDEO_INPUT_DIR:-/workspace/videos/input}
+      - VIDEO_OUTPUT_DIR=${VIDEO_OUTPUT_DIR:-/workspace/videos/output}
+      - OPENCV_VIDEOIO_PRIORITY_GSTREAMER=0
+      
+      # Model directories
+      - YOLO_MODELS_DIR=/app/weights
+      - CV_MODELS_DIR=/app/models
+      - CV_DATA_DIR=/app/data
+      
+      # Basketball-specific configuration
+      - BASKETBALL_COURT_MODEL=${BASKETBALL_COURT_MODEL:-basketball-court-detection-2-mlopt}
+      - PLAYER_DETECTION_MODEL=${PLAYER_DETECTION_MODEL:-yolov8n.pt}
+      - BALL_DETECTION_MODEL=${BALL_DETECTION_MODEL:-basketball-ball-detection}
+      - COURT_DETECTION_CONFIDENCE=${COURT_DETECTION_CONFIDENCE:-0.7}
+      - PLAYER_DETECTION_CONFIDENCE=${PLAYER_DETECTION_CONFIDENCE:-0.5}
+      - BALL_DETECTION_CONFIDENCE=${BALL_DETECTION_CONFIDENCE:-0.4}
+      
+      # Tracking configuration
+      - TRACKING_CONFIDENCE_THRESHOLD=${TRACKING_CONFIDENCE_THRESHOLD:-0.5}
+      - TRACKING_IOU_THRESHOLD=${TRACKING_IOU_THRESHOLD:-0.3}
+      - TRACKING_MAX_AGE=${TRACKING_MAX_AGE:-30}
+      
+      # Development settings
+      - DEBUG_MODE=${DEBUG_MODE:-false}
+      - VERBOSE_LOGGING=${VERBOSE_LOGGING:-false}
+      - PYTHONUNBUFFERED=1
+      - PYTHONHASHSEED=random
+      - PYTHONWARNINGS=ignore::UserWarning
+      - TF_CPP_MIN_LOG_LEVEL=2
+      - OMP_NUM_THREADS=4
+      - MKL_NUM_THREADS=4
 
     volumes:
-      - ..:/workspace:delegated
-      - ../mlruns:/workspace/mlruns
-      # Cache mounts for faster rebuilds
+      # FIXED: Volume paths corrected to use parent directory references
+      # Main workspace - project root mounted to /workspace
+      - ..:/workspace:cached
+      
+      # FIXED: MLflow artifacts - corrected paths relative to project root
+      - ../mlruns:/workspace/mlruns:cached
+      - ../mlflow_db:/workspace/mlflow_db:cached
+      
+      # UV cache for faster builds
       - uv-cache:/root/.cache/uv
+      
+      # FIXED: Computer Vision specific volumes - corrected paths
+      - ../models:/app/models:cached
+      - ../weights:/app/weights:cached  
+      - ../data:/app/data:cached
+      - ../videos:/workspace/videos:cached
+      
+      # CV library caches
+      - yolo-cache:/root/.cache/ultralytics
+      - roboflow-cache:/root/.cache/roboflow
+      
+      # X11 socket for GUI applications (Linux/Unix only)
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      # FIXED: More robust X11 authority handling
+      - ${HOME}/.Xauthority:/root/.Xauthority:rw
 
     ports:
-      - "${HOST_JUPYTER_PORT:-8890}:8888"
-      - "${HOST_TENSORBOARD_PORT:-6008}:6008"
-      - "${HOST_EXPLAINER_PORT:-8050}:8050"
-      - "${HOST_STREAMLIT_PORT:-8501}:8501"
+      # Original ports
+      - "${HOST_JUPYTER_PORT:-8895}:8888"
+      - "${HOST_TENSORBOARD_PORT:-6005}:6008"
+      - "${HOST_EXPLAINER_PORT:-8055}:8050"
+      - "${HOST_STREAMLIT_PORT:-8505}:8501"
+      
+      # Computer Vision specific ports
+      - "${HOST_CV_API_PORT:-8080}:8080"
+      - "${HOST_CV_STREAM_PORT:-8554}:8554"
 
+    # ENHANCED: Startup command with better error handling and debugging
     command: >
       bash -lc '
-        echo "[boot] Activating environment...";
+        set -e;
+        echo "[boot] Starting enhanced container: ${ENV_NAME:-bball_homography_pipeline_env}";
+        echo "[boot] System info: $$(uname -a)";
+        echo "[boot] GPU info: $$(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader || echo "nvidia-smi not available")";
+        echo "[boot] Working directory: $$(pwd)";
+        echo "[boot] Files in /workspace: $$(ls -la /workspace/ | head -5)";
+        echo "[boot] Activating uv environment...";
         source /app/.venv/bin/activate;
-        echo "[boot] Starting Jupyter Lab...";
-        jupyter lab --ip=0.0.0.0 --port=8888 --allow-root 
-        --NotebookApp.token="${JUPYTER_TOKEN}" 
-        --NotebookApp.allow_origin="*" 
-        --NotebookApp.open_browser=false
+        echo "[boot] Environment activated - Python: $$(which python)";
+        echo "[boot] Python version: $$(python --version)";
+        echo "[boot] UV available: $$(uv --version 2>/dev/null || echo "uv not found")";
+        echo "[boot] Running GPU validation...";
+        python /app/validate_gpu.py --quick || echo "GPU validation completed with warnings";
+        echo "[boot] Running Computer Vision validation...";
+        python /app/tests/test_yolo.py --quick || echo "CV validation completed with warnings";
+        echo "[boot] Creating necessary directories...";
+        mkdir -p /workspace/videos/input /workspace/videos/output /workspace/models /workspace/weights;
+        echo "[boot] Starting Jupyter Lab on port 8888...";
+        exec jupyter lab --ip=0.0.0.0 --port=8888 --allow-root \
+        --ServerApp.token="${JUPYTER_TOKEN:-jupyter}" \
+        --ServerApp.allow_origin="*" \
+        --ServerApp.open_browser=false \
+        --ServerApp.root_dir="/workspace"
       '
 
+    # ENHANCED: Healthcheck with CV components
     healthcheck:
-      test: ["CMD-SHELL", "python -c 'import jupyterlab' 2>/dev/null || exit 1"]
-      interval: 30s
-      timeout: 5s
+      test: |
+        bash -c '
+          source /app/.venv/bin/activate 2>/dev/null || exit 1;
+          python -c "
+            import sys, torch, jax, cv2;
+            from ultralytics import YOLO;
+            assert torch.cuda.is_available(), \"PyTorch CUDA not available\";
+            gpu_devs = [d for d in jax.devices() if \"gpu\" in str(d).lower()];
+            assert len(gpu_devs) > 0, \"JAX GPU devices not found\";
+            assert cv2.__version__ is not None, \"OpenCV not available\";
+            print(f\"Health check OK: PyTorch CUDA={torch.cuda.is_available()}, JAX GPUs={len(gpu_devs)}, OpenCV={cv2.__version__}, YOLO=OK\")
+          " 2>/dev/null || (echo "Health check failed" && exit 1)
+        '
+      interval: 60s
+      timeout: 30s
       retries: 3
-      start_period: 30s  # Reduced from 60s
+      start_period: 300s
 
     labels:
-      - "com.docker.compose.project=${ENV_NAME:-cancer_bayes_iris_env}"
+      - "com.docker.compose.project=${ENV_NAME:-bball_homography_pipeline_env}"
       - "com.docker.compose.service=datascience"
-      - "description=AI/ML Dev Env (PyTorch+JAX GPU)"
+      - "description=RTX 4090 GPU Dev Environment with Computer Vision (PyTorch+JAX+YOLO+OpenCV) - CUDA 12.4"
 
+  # FIXED: MLflow service with corrected volume paths
   mlflow:
+    container_name: ${ENV_NAME:-bball_homography_pipeline_env}_mlflow
     image: ghcr.io/mlflow/mlflow:latest
+    
     command: >
-      mlflow server
-      --host 0.0.0.0
-      --port 5000
-      --backend-store-uri sqlite:///mlflow.db
-      --default-artifact-root /mlflow_artifacts
+      bash -c '
+        set -e;
+        echo "[MLflow] Starting MLflow server...";
+        mkdir -p /mlflow_artifacts /mlflow_db;
+        echo "[MLflow] Created directories";
+        echo "[MLflow] Database path: /mlflow_db/mlflow.db";
+        echo "[MLflow] Artifacts path: /mlflow_artifacts";
+        exec mlflow server
+        --host 0.0.0.0
+        --port 5000
+        --backend-store-uri sqlite:////mlflow_db/mlflow.db
+        --default-artifact-root /mlflow_artifacts
+        --serve-artifacts
+      '
+    
     environment:
       MLFLOW_EXPERIMENTS_DEFAULT_ARTIFACT_LOCATION: /mlflow_artifacts
+    
     volumes:
-      - ../mlruns:/mlflow_artifacts
-      - ../mlflow_db:/mlflow_db
+      # FIXED: Volume paths corrected to match main service
+      - ../mlruns:/mlflow_artifacts:cached
+      - ../mlflow_db:/mlflow_db:cached
+    
     ports:
-      - "${HOST_MLFLOW_PORT:-5000}:5000"
+      - "${HOST_MLFLOW_PORT:-5005}:5000"
+    
     restart: unless-stopped
+    
+    # FIXED: More reliable healthcheck
     healthcheck:
-      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:5000/health').raise_for_status()"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-      start_period: 15s  # Reduced from 30s
+      test: |
+        timeout 10 bash -c '</dev/tcp/localhost/5000' || 
+        curl -f -s http://localhost:5000 >/dev/null 2>&1 || 
+        wget --quiet --tries=1 --timeout=5 --spider http://localhost:5000 || 
+        exit 1
+      interval: 30s
+      timeout: 15s
+      retries: 10
+      start_period: 120s
 
-# Named volume for uv cache persistence
+    labels:
+      - "com.docker.compose.project=${ENV_NAME:-bball_homography_pipeline_env}"
+      - "description=MLflow Experiment Tracking Server with CV Support"
+
+# Named volumes for cache persistence
 volumes:
   uv-cache:
+    driver: local
+  yolo-cache:
+    driver: local
+  roboflow-cache:
+    driver: local

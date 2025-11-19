@@ -1,22 +1,25 @@
 {
-  "name": "docker_dev_template_rtx4090",
-  "dockerComposeFile": "../docker-compose.yml",
+  "name": "bball_homography_pipeline_env",
+  "dockerComposeFile": "docker-compose.yml",
   "service": "datascience",
   "workspaceFolder": "/workspace",
   "shutdownAction": "stopCompose",
 
   "overrideCommand": false,
+  
   "containerEnv": {
     "CONTAINER_WORKSPACE_FOLDER": "/workspace",
     "UV_PROJECT_ENVIRONMENT": "/app/.venv",
     "VIRTUAL_ENV": "/app/.venv",
     "PYTHONPATH": "/workspace",
-    "TERM": "xterm-256color"
+    "TERM": "xterm-256color",
+    "DEBIAN_FRONTEND": "noninteractive"
   },
 
   "runArgs": [
     "--gpus", "all",
-    "--name", "${localEnv:ENV_NAME:docker_dev_template}_datascience"
+    "--name", "${localEnv:ENV_NAME:bball_homography_pipeline_env}_datascience",
+    "--shm-size", "16g"
   ],
 
   "customizations": {
@@ -26,6 +29,7 @@
         "python.pythonPath": "/app/.venv/bin/python",
         "python.terminal.activateEnvironment": true,
         "python.terminal.activateEnvInCurrentTerminal": true,
+        
         "terminal.integrated.defaultProfile.linux": "bash",
         "terminal.integrated.profiles.linux": {
           "bash": {
@@ -39,50 +43,133 @@
             }
           }
         },
+        
         "jupyter.notebookFileRoot": "/workspace",
-        "jupyter.kernels.filter": [
-          {
-            "path": "/app/.venv/bin/python",
-            "type": "pythonEnvironment"
+        "jupyter.interactiveWindow.creationMode": "perFile",
+        
+        "files.watcherExclude": {
+          "**/.git/**": true,
+          "**/node_modules/**": true,
+          "**/__pycache__/**": true,
+          "**/.pytest_cache/**": true,
+          "**/.venv/**": true,
+          "**/videos/**": true,
+          "**/models/**": true,
+          "**/weights/**": true
+        },
+        
+        "files.associations": {
+          "*.py": "python",
+          "*.ipynb": "jupyter-notebook",
+          "*.yml": "yaml",
+          "*.yaml": "yaml",
+          "*.toml": "toml"
+        },
+
+        "python.analysis.extraPaths": [
+          "/workspace",
+          "/app/.venv/lib/python3.10/site-packages"
+        ],
+        
+        "python.linting.enabled": true,
+        "python.linting.pylintEnabled": false,
+        "python.linting.flake8Enabled": true,
+        "python.formatting.provider": "black",
+        "python.defaultInterpreterPath": "/app/.venv/bin/python",
+        
+        "[python]": {
+          "editor.formatOnSave": true,
+          "editor.codeActionsOnSave": {
+            "source.organizeImports": true
           }
-        ]
+        },
+        
+        "docker.showStartPage": false,
+        "git.autofetch": true,
+        "editor.minimap.enabled": false,
+        "workbench.colorTheme": "Default Dark+",
+        "editor.fontSize": 14,
+        "terminal.integrated.fontSize": 13
       },
+      
       "extensions": [
         "ms-python.python",
+        "ms-python.flake8", 
+        "ms-python.black-formatter",
         "ms-toolsai.jupyter",
         "ms-azuretools.vscode-docker",
-        "ms-python.flake8",
-        "ms-python.black-formatter"
+        "ms-vscode.makefile-tools",
+        "tamasfe.even-better-toml",
+        "ms-vscode.vscode-json",
+        "redhat.vscode-yaml",
+        "ms-python.mypy-type-checker",
+        "ms-toolsai.vscode-ai",
+        "github.copilot",
+        "github.copilot-chat",
+        "ms-toolsai.vscode-jupyter-powertoys"
       ]
     }
   },
-
-  "onCreateCommand": [
-    "bash", "-lc",
-    "echo 'onCreate: validating environment'; ls -la /app/.venv/bin/; which python || echo 'python not found in PATH'"
-  ],
-
-  "postCreateCommand": [
-    "bash", "-lc",
-    "set -e; source /app/.venv/bin/activate; python -c 'import sys; print(f\"python: {sys.executable}\")'; uv pip install -U ipykernel jupyter-client -q; python -m ipykernel install --user --name='uv_docker_dev_template' --display-name='Python (UV Environment)'; jupyter kernelspec list; python /app/tests/test_summary.py"
-  ],
-
-  "postStartCommand": [
-    "bash", "-lc",
-    "source /app/.venv/bin/activate; python --version; python -c 'import torch; print(f\"pytorch cuda: {torch.cuda.is_available()}\")' || echo 'pytorch test failed'; python /app/validate_gpu.py --quick || echo 'gpu validation completed with warnings'"
-  ],
-
-  "features": {},
-  "forwardPorts": [8888, 6008, 8050, 8501, 5000],
+  "postCreateCommand": "bash -lc 'source /app/.venv/bin/activate && python -m ipykernel install --user --name uv-bball --display-name \"Python (uv-bball)\" && echo \"[POST-CREATE] Attempting to install sports package from GitHub...\" && (uv pip install git+https://github.com/roboflow/sports.git@bb203feb8f538e5f65c9823c3b909e01d4d0f4f0 && echo \"✅ Sports package installed successfully\") || echo \"⚠️ Sports package installation failed - GitHub may be unavailable. Install manually later with: uv pip install git+https://github.com/roboflow/sports.git\"'",
+  "postStartCommand": {
+    "validate-versions": [
+      "bash", "-lc",
+      "set -e; source /app/.venv/bin/activate; echo '[POST-START] Toolchain versions:'; uv --version || true; python -c 'import torch; print(\"torch:\", torch.__version__); print(\"torch.cuda.is_available:\", torch.cuda.is_available())' || true; python -c 'import jax, jaxlib; print(\"jax:\", jax.__version__); print(\"jaxlib:\", jaxlib.__version__); print(\"jax.devices:\", [str(d) for d in jax.devices()])' || true; python -c 'import pytensor; print(\"pytensor:\", getattr(pytensor, \"__version__\", \"unknown\"))' || true; python -c 'import ultralytics as u; from ultralytics import YOLO; print(\"ultralytics:\", getattr(u, \"__version__\", \"unknown\")); print(\"YOLO import: OK\")' || true; echo '[POST-START] Done.'"
+    ]
+  },
+  "forwardPorts": [8888, 6008, 8050, 8501, 5000, 8080, 8554],
   "portsAttributes": {
-    "8888": { "label": "Jupyter Lab", "onAutoForward": "notify" },
-    "6008": { "label": "TensorBoard", "onAutoForward": "silent" },
-    "8050": { "label": "Explainer Dashboard", "onAutoForward": "silent" },
-    "8501": { "label": "Streamlit", "onAutoForward": "silent" },
-    "5000": { "label": "MLflow", "onAutoForward": "silent" }
+    "8888": { 
+      "label": "Jupyter Lab", 
+      "onAutoForward": "notify",
+      "protocol": "http"
+    },
+    "6008": { 
+      "label": "TensorBoard", 
+      "onAutoForward": "silent",
+      "protocol": "http"
+    },
+    "8050": { 
+      "label": "Explainer Dashboard", 
+      "onAutoForward": "silent",
+      "protocol": "http"
+    },
+    "8501": { 
+      "label": "Streamlit", 
+      "onAutoForward": "silent",
+      "protocol": "http"
+    },
+    "5000": { 
+      "label": "MLflow", 
+      "onAutoForward": "silent",
+      "protocol": "http"
+    },
+    "8080": { 
+      "label": "CV API Server", 
+      "onAutoForward": "silent",
+      "protocol": "http"
+    },
+    "8554": { 
+      "label": "RTSP Stream", 
+      "onAutoForward": "silent",
+      "protocol": "rtsp"
+    }
   },
 
   "mounts": [
-    "source=docker_dev_template_uv_cache,target=/root/.cache/uv,type=volume"
-  ]
+    "source=bball_homography_pipeline_env_uv_cache,target=/root/.cache/uv,type=volume",
+    "source=bball_homography_pipeline_env_yolo_cache,target=/root/.cache/ultralytics,type=volume",
+    "source=bball_homography_pipeline_env_roboflow_cache,target=/root/.cache/roboflow,type=volume"
+  ],
+
+  "features": {},
+  
+  "waitFor": "postCreateCommand",
+  
+  "postCreateCommand.timeout": 600,
+  "postStartCommand.timeout": 180,
+
+  "remoteUser": "root",
+  
+  "containerUser": "root"
 }

@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir:*)",
+      "Bash(docker buildx du:*)",
+      "Bash(docker system df:*)",
+      "Bash(docker images:*)",
+      "Bash(python:*)",
+      "Bash(docker buildx prune:*)",
+      "Bash(/dev/null)",
+      "Bash(docker-compose config:*)",
+      "Bash(echo:*)",
+      "Bash(docker ps:*)",
+      "Bash(docker logs:*)",
+      "Bash(docker inspect:*)",
+      "Bash(docker exec:*)",
+      "Bash(docker-compose restart:*)",
+      "Bash(docker info:*)",
+      "Bash(python3:*)",
+      "Bash(find:*)",
+      "Bash(cat:*)",
+      "Bash(git add:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

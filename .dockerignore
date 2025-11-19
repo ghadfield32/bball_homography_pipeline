@@ -1,34 +1,23 @@
-# VCS/editor
+# (put this at the project root as .dockerignore)
 .git
 .gitignore
+.gitmodules
 .vscode
 .idea
-.DS_Store
-Thumbs.db
-
-# Python
-**/__pycache__/
-**/*.py[cod]
-**/*.pyo
+__pycache__/
+*.py[cod]
 *.log
-
-# Virtual envs
-.venv
-venv
-env
-
-# Data / artifacts
+*.tmp
+.ipynb_checkpoints/
+# Large data & models
 data/
-mlruns/
-mlflow_db/
-**/.ipynb_checkpoints/
-
-# Big notebooks outputs
-notebooks/**/*.ipynb_checkpoints
-
-# OS / misc
-*.code-workspace
-
-# We still need the .devcontainer directory for the Dockerfile, scripts, etc.
-
-
+models/
+weights/
+videos/
+# Node/yarn caches
+node_modules/
+# Docs/tests if you don't need them in build
+docs/
+tests/
+README*
+LICENSE*

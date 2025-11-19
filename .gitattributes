@@ -5,4 +5,7 @@ Dockerfile text eol=lf
 *.dockerfile text eol=lf
 docker-compose*.yml text eol=lf
 *.env    text eol=lf
+* text=auto
+*.sh text eol=lf
+Dockerfile text eol=lf
 

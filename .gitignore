@@ -19,4 +19,21 @@ test_iris.json
 # Railway CLI (never commit tokens)
 .railway/config.json
 
-archive/
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Data folders with images/videos
+data/
+videos/
+images/
+
+# Large binary files
+*.tar
+*.tar.gz
+*.zip
+
+# Generated/temp files
+nul
+output.png

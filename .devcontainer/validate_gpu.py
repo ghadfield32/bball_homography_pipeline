@@ -1,290 +1,366 @@
 #!/usr/bin/env python3
 """
-GPU validation and environment diagnostics for RTX 4090 devcontainer.
-Focus: verify JAX and PyTorch access to CUDA, report common misconfigurations.
+Docker Build & GPU Validation Script (container-friendly)
+- Adds --quick mode to skip Docker CLI checks
+- Skips Docker checks automatically if docker is unavailable
+- Keeps strict on GPU/Torch/JAX checks
 """
-import sys
 import os
+import sys
+import shutil
 import subprocess
-import warnings
-import textwrap
-import re
-warnings.filterwarnings('ignore')
+import argparse
+from pathlib import Path
+from typing import List, Tuple
 
 
 def print_section(title: str) -> None:
-    print("\n" + "=" * 60)
-    print(f"  {title}")
-    print("=" * 60)
+    print(f"\n{'='*60}\n  {title}\n{'='*60}")
 
 
-def validate_environment_variables() -> bool:
-    """Validate JAX‑related environment variables (no inline comments, valid types)."""
-    print_section("JAX ENVIRONMENT VARIABLE VALIDATION")
+def run_command(cmd: List[str], timeout: int = 60) -> Tuple[bool, str, str]:
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return r.returncode == 0, r.stdout, r.stderr
+    except Exception as e:
+        return False, "", str(e)
 
-    jax_numeric_vars = {
-        'XLA_PYTHON_CLIENT_MEM_FRACTION': {'type': 'float', 'range': (0.0, 1.0)},
-        'JAX_PREALLOCATION_SIZE_LIMIT_BYTES': {'type': 'int', 'range': (0, None)},
-    }
-    jax_string_vars = {
-        'XLA_FLAGS', 'JAX_PLATFORM_NAME', 'XLA_PYTHON_CLIENT_ALLOCATOR', 'XLA_PYTHON_CLIENT_PREALLOCATE'
-    }
 
-    ok = True
-    problems = []
+def docker_available() -> bool:
+    return shutil.which("docker") is not None
 
-    for var, cfg in jax_numeric_vars.items():
-        value = os.environ.get(var)
-        print(f"\nCheck {var} -> {value}")
-        if value is None:
-            print("  not set; defaults apply")
-            continue
-        if '#' in value:
-            clean = value.split('#')[0].strip()
-            print("  contains inline comment; use:", clean)
-            problems.append((var, value, clean))
-            ok = False
-            continue
-        try:
-            if cfg['type'] == 'float':
-                v = float(value)
-                low, high = cfg['range']
-                if (low is not None and v < low) or (high is not None and v > high):
-                    print("  out of recommended range")
-                else:
-                    print("  ok")
-            else:
-                v = int(value)
-                print("  ok")
-        except ValueError as e:
-            print("  invalid numeric value:", e)
-            ok = False
 
-    for var in jax_string_vars:
-        value = os.environ.get(var)
-        if value and '#' in value:
-            print(f"warn: {var} contains '#', which can break parsing")
+def ensure_project_structure() -> bool:
+    print_section("ENSURING PROJECT STRUCTURE")
+    cwd = Path.cwd()
+    print(f"Current directory: {cwd}")
 
-    if problems:
-        print("\nFix suggestions:")
-        for var, bad, clean in problems:
-            print(f"export {var}={clean}")
+    if (cwd / ".devcontainer").exists():
+        project_root = cwd
+    elif cwd.name == ".devcontainer":
+        project_root = cwd.parent
+    else:
+        project_root = cwd
+        (project_root / ".devcontainer").mkdir(exist_ok=True)
+
+    dev_dir = project_root / ".devcontainer"
+    print(f"Project root: {project_root}")
+    print(f"DevContainer directory: {dev_dir}")
+
+    (dev_dir / "tests").mkdir(exist_ok=True)
+
+    pyproject = project_root / "pyproject.toml"
+    if not pyproject.exists():
+        print("Creating minimal pyproject.toml...")
+        pyproject.write_text(
+            """[project]
+name = "bball_homography_pipeline_env"
+version = "0.1.0"
+description = "Docker development environment"
+requires-python = ">=3.10,<3.13"
+
+dependencies = [
+    "pandas>=2.0",
+    "numpy>=1.20,<2",
+    "matplotlib>=3.4.0",
+    "scipy>=1.7.0",
+    "jupyterlab>=3.0.0",
+]
+
+[tool.uv]
+index-strategy = "unsafe-best-match"
+"""
+        )
+        print("✅ Created pyproject.toml")
+
+    return True
+
+
+def create_env_file() -> bool:
+    print_section("CREATING ENVIRONMENT FILE")
+    t = Path(".devcontainer/.env.template")
+    f = Path(".devcontainer/.env")
+    if t.exists() and not f.exists():
+        f.write_bytes(t.read_bytes())
+        print("✅ Created .env from template")
+        return True
+    elif f.exists():
+        print("✅ .env file already exists")
+        return True
+    else:
+        f.write_text(
+            """ENV_NAME=bball_homography_pipeline_env
+CUDA_TAG=12.4.0
+PYTHON_VER=3.10
+HOST_JUPYTER_PORT=8891
+HOST_TENSORBOARD_PORT=6008
+HOST_EXPLAINER_PORT=8050
+HOST_STREAMLIT_PORT=8501
+HOST_MLFLOW_PORT=5000
+"""
+        )
+        print("✅ Created minimal .env file")
+        return True
+
+
+def fix_file_permissions() -> bool:
+    print_section("FIXING FILE PERMISSIONS")
+    try:
+        is_wsl = "microsoft" in os.uname().release.lower()
+    except Exception:
+        is_wsl = False
+
+    if os.name == "nt" or is_wsl:
+        print("Detected Windows/WSL environment")
+        for p in [
+            ".devcontainer/validate_gpu.py",
+            ".devcontainer/tests/test_summary.py",
+            ".devcontainer/tests/test_pytorch.py",
+            ".devcontainer/tests/test_pytorch_gpu.py",
+            ".devcontainer/tests/test_uv.py",
+        ]:
+            fp = Path(p)
+            if fp.exists():
+                try:
+                    os.chmod(fp, 0o755)
+                    print(f"✅ Fixed permissions for {p}")
+                except Exception as e:
+                    print(f"⚠️ Could not fix permissions for {p}: {e}")
+    return True
+
+
+def validate_docker_environment() -> bool:
+    print_section("VALIDATING DOCKER ENVIRONMENT")
+    if not docker_available():
+        print("ℹ️ Docker CLI not found in this environment; skipping Docker checks.")
+        return True  # treat as success inside containers
+    ok, out, err = run_command(["docker", "info"])
+    if not ok:
+        print(f"❌ Docker daemon not accessible: {err}")
+        return False
+    print("✅ Docker daemon is running")
+
+    ok, out, err = run_command(["docker", "compose", "version"])
+    if not ok:
+        print(f"❌ Docker Compose not available: {err}")
+        return False
+    print(f"✅ Docker Compose: {out.strip()}")
+    return True
+
+
+def stop_and_remove_containers() -> bool:
+    print_section("CLEANING EXISTING CONTAINERS")
+    if not docker_available():
+        print("ℹ️ Docker CLI not found; skipping container cleanup.")
+        return True
+    ok, _, err = run_command(
+        ["docker", "compose", "-f", ".devcontainer/docker-compose.yml", "down", "--volumes"]
+    )
+    if not ok:
+        print(f"⚠️ Could not stop containers (may not exist): {err}")
+    for name in ["bball_homography_pipeline_env_datascience", "bball_homography_pipeline_env_mlflow"]:
+        run_command(["docker", "rm", "-f", name])
+    print("✅ Container cleanup complete")
+    return True
+
+
+def clean_docker_cache() -> bool:
+    print_section("CLEANING DOCKER CACHE")
+    if not docker_available():
+        print("ℹ️ Docker CLI not found; skipping cache prune.")
+        return True
+    ok, out, err = run_command(["docker", "builder", "prune", "--all", "--force"])
+    if ok:
+        print("✅ Docker build cache cleaned")
+        if out:
+            print(out)
+        return True
+    print(f"❌ Failed to clean Docker cache: {err}")
+    return False
+
+
+def test_build() -> bool:
+    print_section("TESTING DOCKER BUILD")
+    if not docker_available():
+        print("ℹ️ Docker CLI not found; skipping compose build test.")
+        return True
+    if Path.cwd().name == ".devcontainer":
+        os.chdir("..")
+    compose_file = ".devcontainer/docker-compose.yml"
+    print(f"Using compose file: {Path(compose_file).absolute()}")
+    print(f"Build context: {Path('.').absolute()}")
+    ok, out, err = run_command(
+        ["docker", "compose", "-f", compose_file, "build", "--no-cache"], timeout=600
+    )
+    if ok:
+        print("✅ Docker build successful!")
+        print("\n".join(out.splitlines()[-10:]))
+        return True
+    print("❌ Docker build failed")
+    print("STDERR:\n", err)
+    print("STDOUT (last 20 lines):\n", "\n".join(out.splitlines()[-20:]))
+    return False
+
+
+def section_summary(struct_ok, uv_ok, pt_ok, jax_ok):
+    print_section("SUMMARY")
+    print(f"structure: {struct_ok} uv: {uv_ok} pytorch: {pt_ok} jax: {jax_ok}")
+
+
+def test_uv() -> bool:
+    print_section("UV")
+    ok, out, err = run_command(["uv", "--version"])
+    print((out or err).strip() or "uv not in PATH")
     return ok
 
 
-def check_environment() -> None:
-    print_section("ENVIRONMENT CHECK")
-    print("python:", sys.executable)
-    print("version:", sys.version)
-    print("VIRTUAL_ENV:", os.environ.get('VIRTUAL_ENV'))
-    print("PATH contains .venv:", '.venv/bin' in os.environ.get('PATH', ''))
-
-    cuda_vars = ['CUDA_HOME', 'CUDA_PATH', 'CUDA_VISIBLE_DEVICES', 'LD_LIBRARY_PATH', 'NVIDIA_VISIBLE_DEVICES']
-    print("\nCUDA variables:")
-    for var in cuda_vars:
-        print(f"  {var}:", os.environ.get(var, 'not set'))
-
-    try:
-        result = subprocess.run(
-            ['nvidia-smi', '--query-gpu=name,driver_version,memory.total', '--format=csv,noheader'],
-            capture_output=True, text=True
-        )
-        if result.returncode == 0:
-            print("\nGPU:", result.stdout.strip())
-        else:
-            print("\nwarn: nvidia-smi returned non‑zero")
-    except FileNotFoundError:
-        print("\nwarn: nvidia-smi not found in path")
-
-
 def test_pytorch() -> bool:
-    print_section("PYTORCH GPU TEST")
+    print_section("PYTORCH")
     try:
         import torch
         print("version:", torch.__version__)
-        print("cuda available:", torch.cuda.is_available())
+        print("cuda:", torch.cuda.is_available())
         if torch.cuda.is_available():
-            print("device count:", torch.cuda.device_count())
-            print("device 0:", torch.cuda.get_device_name(0))
-            # quick matmul
+            d = torch.device("cuda:0")
             import time
-            dev = torch.device('cuda')
-            x = torch.randn(2000, 2000, device=dev)
-            y = torch.randn(2000, 2000, device=dev)
-            _ = x @ y
-            torch.cuda.synchronize()
+            x = torch.randn((512, 512), device=d)
             t0 = time.time()
-            r = x @ y
+            y = (x @ x.T).sum()
             torch.cuda.synchronize()
-            print("matmul elapsed s:", round(time.time() - t0, 3))
-            _ = r.sum().item()
+            print("sum:", float(y))
+            print(f"gpu op ms: {(time.time() - t0)*1000:.2f}")
             return True
         return False
     except Exception as e:
-        print("pytorch test error:", e)
-        return False
-
-
-def check_cudnn_compatibility() -> bool:
-    """Check CuDNN version compatibility between PyTorch and JAX."""
-    print_section("CUDNN COMPATIBILITY CHECK")
-    try:
-        import torch
-        import subprocess
-        import glob
-        
-        # Check PyTorch CuDNN version
-        pytorch_cudnn = torch.backends.cudnn.version()
-        print(f"PyTorch CuDNN version: {pytorch_cudnn}")
-        
-        # Check installed nvidia-cudnn-cu12 package version
-        try:
-            result = subprocess.run(['uv', 'pip', 'list'], capture_output=True, text=True)
-            if result.returncode == 0:
-                lines = result.stdout.split('\n')
-                for line in lines:
-                    if 'nvidia-cudnn-cu12' in line:
-                        print(f"Installed CuDNN package: {line.strip()}")
-                        break
-        except Exception as e:
-            print(f"Could not check CuDNN package version: {e}")
-        
-        # Check CuDNN library files
-        cudnn_paths = [
-            "/app/.venv/lib/python3.10/site-packages/nvidia/cudnn/lib",
-            "/usr/local/cuda/lib64",
-            "/usr/lib/x86_64-linux-gnu"
-        ]
-        
-        print("\nCuDNN library search:")
-        for path in cudnn_paths:
-            if os.path.exists(path):
-                cudnn_libs = glob.glob(f"{path}/libcudnn*")
-                if cudnn_libs:
-                    print(f"  {path}: {len(cudnn_libs)} CuDNN libraries found")
-                    for lib in cudnn_libs[:3]:  # Show first 3
-                        print(f"    - {os.path.basename(lib)}")
-                else:
-                    print(f"  {path}: No CuDNN libraries found")
-            else:
-                print(f"  {path}: Path does not exist")
-        
-        # Check LD_LIBRARY_PATH
-        ld_path = os.environ.get('LD_LIBRARY_PATH', '')
-        print(f"\nLD_LIBRARY_PATH: {ld_path}")
-        
-        # Version compatibility check
-        if pytorch_cudnn < 9000:  # Assuming version format like 9100 for 9.1.0
-            print("WARNING: PyTorch CuDNN version may be too old for JAX")
-            return False
-        
-        print("CuDNN compatibility check passed")
-        return True
-        
-    except Exception as e:
-        print(f"CuDNN compatibility check failed: {e}")
-        return False
-
-
-def test_jax_initialization() -> bool:
-    print_section("JAX INITIALIZATION TEST")
-    try:
-        os.environ['JAX_TRACEBACK_FILTERING'] = 'off'
-        import jax
-        import jaxlib
-        from jaxlib import xla_client
-        print("jax:", jax.__version__, "jaxlib:", jaxlib.__version__)
-        
-        # Check for CuDNN version mismatch errors
-        try:
-            opts = xla_client.generate_pjrt_gpu_plugin_options()
-            print("gpu plugin options ok; memory_fraction:", opts.get('memory_fraction', 'not set'))
-        except Exception as e:
-            print("gpu plugin options error:", e)
-            if "could not convert string to float" in str(e):
-                print("hint: check XLA_PYTHON_CLIENT_MEM_FRACTION for inline comments")
-            elif "CuDNN" in str(e) and "version" in str(e):
-                print("hint: CuDNN version mismatch detected - check compatibility")
-            return False
-        return True
-    except Exception as e:
-        print("jax init error:", e)
-        if "CuDNN" in str(e):
-            print("hint: CuDNN-related error detected")
+        print("error:", e)
         return False
 
 
 def test_jax() -> bool:
-    print_section("JAX GPU TEST")
+    print_section("JAX")
     try:
-        os.environ['JAX_TRACEBACK_FILTERING'] = 'off'
-        import jax, jax.numpy as jnp
-        from jax.lib import xla_bridge
-        print("backend:", xla_bridge.get_backend().platform)
-        devices = jax.devices()
-        print("devices:", devices)
-        gpus = [d for d in devices if 'gpu' in str(d).lower() or getattr(d, 'platform', '') == 'gpu']
+        import jax
+        import jax.numpy as jnp
+
+        devs = jax.devices()
+        print("devices:", devs)
+        gpus = jax.devices("gpu") or [
+            d for d in devs
+            if getattr(d, "platform", "").lower() in {"gpu", "cuda"} or "cuda" in str(d).lower()
+        ]
         if not gpus:
             print("no gpu devices detected by jax")
             return False
-        # quick compute
-        import time
-        key = jax.random.PRNGKey(0)
-        x = jax.random.normal(key, (2000, 2000))
-        x = jax.device_put(x, gpus[0])
-        t0 = time.time()
-        s = jnp.sum(x @ x).block_until_ready()
-        print("matmul elapsed s:", round(time.time() - t0, 3), "sum:", float(s))
-        return True
+        
+        # Enhanced JAX GPU test with CuDNN compatibility check
+        print("Testing JAX GPU computation with CuDNN compatibility...")
+        try:
+            x = jnp.ones((512, 512), dtype=jnp.float32)
+            x = jax.device_put(x, gpus[0])
+            s = jnp.sum(x).block_until_ready()
+            print("sum:", float(s))
+            
+            # Test more complex operations that might trigger CuDNN
+            y = jnp.dot(x, x.T)
+            result = jnp.sum(y).block_until_ready()
+            print("matrix multiplication result:", float(result))
+            return True
+        except Exception as cudnn_error:
+            print(f"JAX GPU computation failed (likely CuDNN issue): {cudnn_error}")
+            print("This is likely due to CuDNN version mismatch between PyTorch and JAX")
+            return False
+            
     except Exception as e:
-        print("jax test error:", e)
+        print("error:", e)
         return False
 
 
-def main() -> int:
-    import argparse
+def fix_cudnn_compatibility() -> bool:
+    """Attempt to fix CuDNN compatibility issues."""
+    print_section("CUDNN COMPATIBILITY FIX")
+    
+    try:
+        import subprocess
+        
+        # Check current CuDNN versions
+        print("Checking current CuDNN versions...")
+        
+        # Try to upgrade CuDNN to compatible version
+        print("Attempting to upgrade CuDNN to compatible version...")
+        result = subprocess.run([
+            'uv', 'pip', 'install', '--upgrade', 
+            'nvidia-cudnn-cu12==9.8.0.69'
+        ], capture_output=True, text=True, timeout=300)
+        
+        if result.returncode == 0:
+            print("✅ CuDNN upgraded successfully")
+            return True
+        else:
+            print(f"⚠️ CuDNN upgrade failed: {result.stderr}")
+            return False
+            
+    except Exception as e:
+        print(f"❌ CuDNN fix failed: {e}")
+        return False
+
+
+def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
-    p.add_argument('--quick', action='store_true')
-    p.add_argument('--fix', action='store_true', help='Run with fix recommendations')
-    args = p.parse_args()
+    p.add_argument("--quick", action="store_true",
+                   help="Skip Docker checks; run only structure/UV/Torch/JAX")
+    p.add_argument("--fix-cudnn", action="store_true",
+                   help="Attempt to fix CuDNN compatibility issues")
+    return p.parse_args()
 
-    if args.quick:
-        env_ok = validate_environment_variables()
-        pt_ok = test_pytorch()
-        return 0 if (env_ok and pt_ok) else 1
 
-    env_ok = validate_environment_variables()
-    check_environment()
-    cudnn_ok = check_cudnn_compatibility()
-    jax_init_ok = test_jax_initialization()
-    jax_ok = test_jax()
+def main() -> int:
+    args = parse_args()
+    print("Docker DevContainer Build & GPU Validation")
+    print(f"Working directory: {os.getcwd()}")
+
+    # Always run these
+    struct_ok = ensure_project_structure()
+    env_ok = create_env_file()
+    perm_ok = fix_file_permissions()
+
+    # Optional Docker checks
+    docker_ok = True
+    build_ok = True
+    cache_ok = True
+    stop_ok = True
+
+    if not args.quick:
+        docker_ok = validate_docker_environment()
+        stop_ok = stop_and_remove_containers()
+        cache_ok = clean_docker_cache()
+        build_ok = test_build()
+
+    uv_ok = test_uv()
     pt_ok = test_pytorch()
+    jax_ok = test_jax()
+    
+    # Attempt CuDNN fix if requested and JAX failed
+    if args.fix_cudnn and not jax_ok:
+        print("\nJAX GPU test failed, attempting CuDNN compatibility fix...")
+        cudnn_fix_ok = fix_cudnn_compatibility()
+        if cudnn_fix_ok:
+            print("Retesting JAX after CuDNN fix...")
+            jax_ok = test_jax()
 
-    print_section("SUMMARY")
-    print("env vars:", "ok" if env_ok else "fail")
-    print("cudnn compatibility:", "ok" if cudnn_ok else "fail")
-    print("jax init:", "ok" if jax_init_ok else "fail")
-    print("jax compute:", "ok" if jax_ok else "fail")
-    print("pytorch:", "ok" if pt_ok else "fail")
+    section_summary(struct_ok, uv_ok, pt_ok, jax_ok)
 
-    # Provide fix recommendations if requested
-    if args.fix and not (env_ok and cudnn_ok and jax_init_ok and jax_ok and pt_ok):
-        print_section("FIX RECOMMENDATIONS")
-        if not cudnn_ok:
-            print("1. CuDNN version mismatch detected:")
-            print("   - Upgrade nvidia-cudnn-cu12 to version >= 9.8.0")
-            print("   - Ensure LD_LIBRARY_PATH includes CuDNN library paths")
-        if not jax_init_ok:
-            print("2. JAX initialization failed:")
-            print("   - Check CuDNN compatibility")
-            print("   - Verify XLA environment variables (no inline comments)")
-        if not jax_ok:
-            print("3. JAX GPU computation failed:")
-            print("   - Verify GPU is accessible")
-            print("   - Check CUDA driver compatibility")
+    # In quick mode, ignore Docker results entirely.
+    if args.quick:
+        return 0 if all([struct_ok, uv_ok, pt_ok, jax_ok]) else 1
 
-    return 0 if (env_ok and cudnn_ok and jax_init_ok and jax_ok and pt_ok) else 1
+    # Otherwise include Docker outcomes.
+    ok = all([
+        struct_ok, env_ok, perm_ok,
+        docker_ok, stop_ok, cache_ok, build_ok,
+        uv_ok, pt_ok, jax_ok
+    ])
+    return 0 if ok else 1
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     sys.exit(main())
