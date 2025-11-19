@@ -39,6 +39,14 @@
 - 2025-11-19 — Shot form analysis: elbow angle, joint sequencing
 - 2025-11-19 — Zone detection: 3-second violation threshold = 90 frames at 30fps
 
+## [Pose & YOLO Integration]
+
+- 2025-11-19 — Standardized pose contract: get_pose_dict_for_tracks() → {track_id: {joint: (u, v, conf, vis)}}
+- 2025-11-19 — Canonical joint naming: JOINT_ID_TO_CANONICAL maps COCO indices → R_WRIST/L_KNEE/HEAD/etc
+- 2025-11-19 — HEAD derived from NOSE keypoint; duplicate face landmarks (eyes, ears) skipped
+- 2025-11-19 — Homography bridge: per-joint image coords projected via H → (x_court, y_court)
+- 2025-11-19 — Kinematics export: one JointCoordinate row per joint per frame per track
+
 ## [Shot Arc Analysis]
 
 - 2025-11-19 — Ball tracking for trajectory: min_points=5, velocity_window=3, smoothing=3

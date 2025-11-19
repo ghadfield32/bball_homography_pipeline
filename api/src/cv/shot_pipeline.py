@@ -2850,42 +2850,64 @@ def process_video_enhanced(
                     frame_index, poses, tracked_dets, use_img2court
                 )
 
-            # ---- Kinematics accumulation
-            if kinematics_standardizer is not None and poses is not None:
+            # ---- Kinematics accumulation (using standardized pose contract)
+            if kinematics_standardizer is not None and poses is not None and pose_pipeline is not None:
+                # Get canonical pose dict per track using standardized contract
+                pose_by_track = pose_pipeline.get_pose_dict_for_tracks(poses, tracked_dets)
+
                 # Get homography matrix for coordinate transformation
                 H = None
                 if use_img2court is not None:
                     H = use_img2court.m
 
-                # Process each tracked player with pose
-                for i, det in enumerate(tracked_dets):
-                    track_id = int(det.tracker_id[0]) if det.tracker_id is not None and len(det.tracker_id) > 0 else i
-                    team_id = team_assignments.get(i, -1) if team_assignments else -1
+                # Helper to project joint through homography
+                def project_joint(u_px: float, v_px: float):
+                    if H is None:
+                        return np.nan, np.nan
+                    pt = np.array([u_px, v_px, 1.0], dtype=float)
+                    result = H @ pt
+                    if abs(result[2]) < 1e-8:
+                        return np.nan, np.nan
+                    return float(result[0] / result[2]), float(result[1] / result[2])
 
-                    # Find matching pose for this detection (by bbox overlap)
-                    if poses is not None and hasattr(poses, 'xy') and len(poses.xy) > 0:
-                        # Simple: use index if available
-                        pose_idx = min(i, len(poses.xy) - 1)
-                        keypoints = poses.xy[pose_idx]
-                        confidences = poses.confidence[pose_idx] if hasattr(poses, 'confidence') else None
+                t_sec = frame_index / fps
 
-                        t_sec = frame_index / fps
+                # Process each tracked player with canonical joints
+                for track_id, joints_dict in pose_by_track.items():
+                    # Get team assignment for this track
+                    team_id = -1
+                    if tracked_dets.tracker_id is not None:
+                        for i, det_tracker_id in enumerate(tracked_dets.tracker_id):
+                            if int(det_tracker_id) == track_id:
+                                team_id = team_assignments.get(i, -1) if team_assignments else -1
+                                break
 
-                        joints = kinematics_standardizer.standardize_keypoints(
+                    # Build joint coordinates for kinematics
+                    for joint_name, (u_px, v_px, conf, vis) in joints_dict.items():
+                        x_court, y_court = project_joint(u_px, v_px)
+
+                        # Create JointCoordinate record directly
+                        joint_record = JointCoordinate(
                             video_id=str(video_path.stem),
                             frame_idx=frame_index,
                             timestamp_s=t_sec,
                             player_id=track_id,
-                            keypoints=keypoints,
-                            keypoint_confidences=confidences,
-                            H=H,
                             team_id=team_id,
                             jersey_number=None,
-                            shot_id=len(shots) if shots else None,
-                            homography_segment_id=calibrator.current_segment_id if calibrator else 0,
+                            joint=joint_name,
+                            u_px=u_px,
+                            v_px=v_px,
+                            x_court_m=x_court,
+                            y_court_m=y_court,
+                            x_world_m=x_court,
+                            y_world_m=y_court,
+                            z_world_m=0.0,  # Court plane
+                            joint_confidence=conf,
                             homography_quality=0.0,
+                            homography_segment_id=calibrator.current_segment_id if calibrator else 0,
+                            shot_id=len(shots) if shots else None,
                         )
-                        all_joint_records.extend(joints)
+                        all_joint_records.append(joint_record)
 
             # ---- Shot events
             events = update_shot_events(frame_index, player_dets, shot_tracker, cfg)

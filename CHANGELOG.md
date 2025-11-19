@@ -229,12 +229,45 @@ out = spl_trial_to_parquet(
 )
 ```
 
+### ✅ YOLO Pose Standardization
+
+**Modified Files**:
+- `api/src/cv/pose_pipeline.py` - Added canonical joint mapping and standardized contract
+- `api/src/cv/shot_pipeline.py` - Updated kinematics accumulation to use standardized contract
+
+Standardized pose-to-kinematics pipeline:
+- Added `JOINT_ID_TO_CANONICAL` mapping (COCO → R_WRIST/L_KNEE/HEAD/etc)
+- Added `get_pose_dict_for_tracks()` method returning `{track_id: {joint: (u, v, conf, vis)}}`
+- HEAD joint derived from NOSE; duplicate face landmarks (eyes, ears) skipped
+- Shot pipeline now uses standardized contract for per-joint homography projection
+
+Joint name contract:
+```python
+# 13 joints total: 12 body + HEAD from NOSE
+JOINT_ID_TO_CANONICAL = {
+    JointID.NOSE: "HEAD",
+    JointID.LEFT_SHOULDER: "L_SHOULDER",
+    JointID.RIGHT_SHOULDER: "R_SHOULDER",
+    JointID.LEFT_ELBOW: "L_ELBOW",
+    JointID.RIGHT_ELBOW: "R_ELBOW",
+    JointID.LEFT_WRIST: "L_WRIST",
+    JointID.RIGHT_WRIST: "R_WRIST",
+    JointID.LEFT_HIP: "L_HIP",
+    JointID.RIGHT_HIP: "R_HIP",
+    JointID.LEFT_KNEE: "L_KNEE",
+    JointID.RIGHT_KNEE: "R_KNEE",
+    JointID.LEFT_ANKLE: "L_ANKLE",
+    JointID.RIGHT_ANKLE: "R_ANKLE",
+}
+```
+
 ### 📊 Files Changed Summary
 
 | File | Action | Lines |
 |------|--------|-------|
 | `api/src/cv/config.py` | MODIFIED | +100 |
-| `api/src/cv/shot_pipeline.py` | MODIFIED | +60 |
+| `api/src/cv/shot_pipeline.py` | MODIFIED | +80 |
+| `api/src/cv/pose_pipeline.py` | MODIFIED | +80 |
 | `api/src/cv/api_endpoints.py` | NEW | ~400 |
 | `api/src/cv/shot_arc.py` | NEW | ~450 |
 | `api/src/cv/siglip_reid.py` | NEW | ~400 |
@@ -242,7 +275,7 @@ out = spl_trial_to_parquet(
 | `api/src/cv/kinematics_standardization.py` | NEW | ~500 |
 | `api/src/biomech/spl_adapter.py` | MODIFIED | +60 |
 | `KINEMATICS_STANDARD.md` | NEW | ~350 |
-| `CV_PIPELINE_LOG.md` | MODIFIED | +10 |
+| `CV_PIPELINE_LOG.md` | MODIFIED | +20 |
 
 ### ⚠️ New Dependencies
 

@@ -71,6 +71,35 @@ SKELETON_CONNECTIONS = [
 ]
 
 
+# =============================================================================
+# CANONICAL JOINT NAME MAPPING
+# =============================================================================
+
+# Map COCO joint indices to canonical names for kinematics standardization
+JOINT_ID_TO_CANONICAL = {
+    JointID.NOSE: "HEAD",
+    JointID.LEFT_EYE: "HEAD",
+    JointID.RIGHT_EYE: "HEAD",
+    JointID.LEFT_EAR: "HEAD",
+    JointID.RIGHT_EAR: "HEAD",
+    JointID.LEFT_SHOULDER: "L_SHOULDER",
+    JointID.RIGHT_SHOULDER: "R_SHOULDER",
+    JointID.LEFT_ELBOW: "L_ELBOW",
+    JointID.RIGHT_ELBOW: "R_ELBOW",
+    JointID.LEFT_WRIST: "L_WRIST",
+    JointID.RIGHT_WRIST: "R_WRIST",
+    JointID.LEFT_HIP: "L_HIP",
+    JointID.RIGHT_HIP: "R_HIP",
+    JointID.LEFT_KNEE: "L_KNEE",
+    JointID.RIGHT_KNEE: "R_KNEE",
+    JointID.LEFT_ANKLE: "L_ANKLE",
+    JointID.RIGHT_ANKLE: "R_ANKLE",
+}
+
+# Joints to skip when building canonical dict (use NOSE for HEAD)
+HEAD_DUPLICATE_JOINTS = {JointID.LEFT_EYE, JointID.RIGHT_EYE, JointID.LEFT_EAR, JointID.RIGHT_EAR}
+
+
 @dataclass
 class PoseObservation:
     """Single pose observation for a player."""
@@ -328,6 +357,56 @@ class PosePipeline:
                 matched[best_track_id] = pose
 
         return matched
+
+    def get_pose_dict_for_tracks(
+        self,
+        poses: List[Dict],
+        tracked_detections,
+    ) -> Dict[int, Dict[str, Tuple[float, float, float, float]]]:
+        """
+        Get pose data as canonical joint dict mapped to track IDs.
+
+        This is the standard contract for kinematics export:
+        - Returns dict mapping track_id -> {joint_name: (u_px, v_px, conf, vis)}
+        - Joint names are canonical (R_WRIST, L_KNEE, etc.)
+        - HEAD is derived from NOSE keypoint
+
+        Args:
+            poses: Pose detections from detect_poses()
+            tracked_detections: sv.Detections with tracker_id
+
+        Returns:
+            {track_id: {canonical_joint: (u_px, v_px, confidence, visibility)}}
+        """
+        matched = self.match_poses_to_tracks(poses, tracked_detections)
+        pose_by_track: Dict[int, Dict[str, Tuple[float, float, float, float]]] = {}
+
+        for track_id, pose in matched.items():
+            joints_for_track: Dict[str, Tuple[float, float, float, float]] = {}
+
+            keypoints = pose["keypoints_image"]  # (17, 2)
+            confidences = pose["confidences"]  # (17,)
+
+            for joint_id in JointID:
+                # Skip duplicate head joints (use NOSE for HEAD)
+                if joint_id in HEAD_DUPLICATE_JOINTS:
+                    continue
+
+                canonical_name = JOINT_ID_TO_CANONICAL.get(joint_id)
+                if canonical_name is None:
+                    continue
+
+                idx = int(joint_id)
+                u_px = float(keypoints[idx, 0])
+                v_px = float(keypoints[idx, 1])
+                conf = float(confidences[idx])
+                vis = conf  # Use confidence as visibility for YOLO
+
+                joints_for_track[canonical_name] = (u_px, v_px, conf, vis)
+
+            pose_by_track[track_id] = joints_for_track
+
+        return pose_by_track
 
     def _compute_iou(self, box1: np.ndarray, box2: np.ndarray) -> float:
         """Compute IoU between two boxes."""
