@@ -191,18 +191,58 @@ export CV_PROFILE=full_biomech
 python -m api.src.cv.shot_pipeline video.mp4
 ```
 
+### ✅ Kinematics Pipeline Integration
+
+**Modified Files**:
+- `api/src/cv/config.py` - Added kinematics export validation
+- `api/src/cv/shot_pipeline.py` - Integrated kinematics collection
+- `api/src/biomech/spl_adapter.py` - Added spl_trial_to_parquet helper
+
+Wired kinematics export into CV pipeline:
+- `process_video_enhanced()` accumulates `JointCoordinate` per frame when pose is enabled
+- Exports standardized kinematics table at end (parquet/csv)
+- Uses homography matrix for image→court coordinate transformation
+
+Validation added:
+- `video_fps > 0` required when kinematics export enabled
+- `kinematics_format` must be 'parquet' or 'csv'
+
+New helper function:
+- `spl_trial_to_parquet()` - Direct SPL CSV → parquet conversion
+
+Usage:
+```bash
+export CV_PROFILE=full_biomech
+export ENABLE_KINEMATICS_EXPORT=1
+python -m api.src.cv.shot_pipeline video.mp4
+# Outputs: kinematics/{video}_kinematics.parquet
+```
+
+SPL usage:
+```python
+from api.src.biomech.spl_adapter import spl_trial_to_parquet
+
+out = spl_trial_to_parquet(
+    csv_path="data/spl/trial.csv",
+    output_dir="output/kinematics",
+    trial_id=1,
+)
+```
+
 ### 📊 Files Changed Summary
 
 | File | Action | Lines |
 |------|--------|-------|
-| `api/src/cv/config.py` | MODIFIED | +80 |
+| `api/src/cv/config.py` | MODIFIED | +100 |
+| `api/src/cv/shot_pipeline.py` | MODIFIED | +60 |
 | `api/src/cv/api_endpoints.py` | NEW | ~400 |
 | `api/src/cv/shot_arc.py` | NEW | ~450 |
 | `api/src/cv/siglip_reid.py` | NEW | ~400 |
 | `api/src/cv/websocket_stream.py` | NEW | ~350 |
 | `api/src/cv/kinematics_standardization.py` | NEW | ~500 |
-| `api/src/biomech/spl_adapter.py` | NEW | ~450 |
+| `api/src/biomech/spl_adapter.py` | MODIFIED | +60 |
 | `KINEMATICS_STANDARD.md` | NEW | ~350 |
+| `CV_PIPELINE_LOG.md` | MODIFIED | +10 |
 
 ### ⚠️ New Dependencies
 

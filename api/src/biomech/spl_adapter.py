@@ -480,3 +480,57 @@ def create_spl_adapter(cfg=None) -> SPLAdapter:
         fps=getattr(cfg, "spl_fps", 120.0),
         dataset_id=getattr(cfg, "spl_dataset_id", "SPL_FREETHROW"),
     )
+
+
+def spl_trial_to_parquet(
+    csv_path: Path,
+    output_dir: Path,
+    trial_id: int = 0,
+    adapter: Optional[SPLAdapter] = None,
+    export_format: str = "parquet",
+) -> Path:
+    """
+    Convenience helper: convert one SPL trial to standardized kinematics
+    and save to disk.
+
+    Args:
+        csv_path: Path to SPL CSV file.
+        output_dir: Directory where the output file will be written.
+        trial_id: Trial identifier.
+        adapter: Optional SPLAdapter; if None, creates default.
+        export_format: 'parquet' (default) or 'csv'.
+
+    Returns:
+        Path to the exported kinematics file.
+
+    Example:
+        out_path = spl_trial_to_parquet(
+            csv_path=Path("data/spl/trial_001.csv"),
+            output_dir=Path("output/kinematics"),
+            trial_id=1,
+        )
+        print(f"Kinematics written to: {out_path}")
+    """
+    csv_path = Path(csv_path)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    if adapter is None:
+        adapter = SPLAdapter()
+
+    # Load trial and convert to standardized format
+    joints = adapter.load_trial_csv(csv_path, trial_id=trial_id)
+
+    # Export
+    stem = csv_path.stem
+    if export_format == "parquet":
+        out_path = output_dir / f"{stem}_kinematics.parquet"
+        adapter.export_to_parquet(joints, out_path)
+    elif export_format == "csv":
+        out_path = output_dir / f"{stem}_kinematics.csv"
+        df = adapter.to_dataframe(joints)
+        df.to_csv(out_path, index=False)
+    else:
+        raise ValueError(f"Unsupported export_format '{export_format}'")
+
+    return out_path

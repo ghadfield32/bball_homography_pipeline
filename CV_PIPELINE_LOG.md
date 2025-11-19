@@ -61,11 +61,15 @@
 - 2025-11-19 — Joint naming: COCO → canonical (R_WRIST, L_KNEE, etc.)
 - 2025-11-19 — SPL adapter: Kabsch transform for lab → court alignment
 - 2025-11-19 — Height estimation: anthropometric ratios, default player=2.01m
+- 2025-11-19 — Pipeline integration: process_video_enhanced accumulates JointCoordinate per frame
+- 2025-11-19 — Export: KINEMATICS_FORMAT=parquet|csv, output to kinematics_output_dir
+- 2025-11-19 — SPL helper: spl_trial_to_parquet() for direct trial → parquet conversion
 
 ## [Validation & Errors]
 
 - 2025-11-19 — Config validation: fail-fast on missing required params
 - 2025-11-19 — Checks: ball_model for arc, siglip_model for re-ID, pose_model for pose
+- 2025-11-19 — Kinematics: video_fps > 0 required, format must be parquet|csv
 
 ## [Open TODOs]
 

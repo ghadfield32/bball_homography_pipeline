@@ -32,6 +32,11 @@ from sports.basketball import (
 )
 
 from api.src.cv.config import CVConfig, ensure_dirs, load_models, court_base_image
+from api.src.cv.kinematics_standardization import (
+    JointCoordinate,
+    KinematicsStandardizer,
+    create_kinematics_standardizer,
+)
 
 
 # Utility to show images if enabled in config
@@ -2761,6 +2766,13 @@ def process_video_enhanced(
         pose_pipeline.load_model()
         print(f"[INFO] Pose estimation enabled ({cfg.pose_model_name})")
 
+    # NEW: Kinematics standardization
+    kinematics_standardizer = None
+    all_joint_records: List[JointCoordinate] = []
+    if cfg.enable_kinematics_export:
+        kinematics_standardizer = create_kinematics_standardizer(cfg)
+        print(f"[INFO] Kinematics export enabled ({cfg.kinematics_format})")
+
     smoother = KeyPointsSmoother(length=cfg.keypoint_smoothing_len)
     shots: List[Shot] = []
     shot_in_progress_xy: Optional[np.ndarray] = None
@@ -2831,11 +2843,49 @@ def process_video_enhanced(
                 )
 
             # ---- Pose estimation
+            poses = None
             if pose_pipeline is not None and len(tracked_dets) > 0:
                 poses = pose_pipeline.detect_poses(frame)
                 pose_pipeline.add_observations(
                     frame_index, poses, tracked_dets, use_img2court
                 )
+
+            # ---- Kinematics accumulation
+            if kinematics_standardizer is not None and poses is not None:
+                # Get homography matrix for coordinate transformation
+                H = None
+                if use_img2court is not None:
+                    H = use_img2court.m
+
+                # Process each tracked player with pose
+                for i, det in enumerate(tracked_dets):
+                    track_id = int(det.tracker_id[0]) if det.tracker_id is not None and len(det.tracker_id) > 0 else i
+                    team_id = team_assignments.get(i, -1) if team_assignments else -1
+
+                    # Find matching pose for this detection (by bbox overlap)
+                    if poses is not None and hasattr(poses, 'xy') and len(poses.xy) > 0:
+                        # Simple: use index if available
+                        pose_idx = min(i, len(poses.xy) - 1)
+                        keypoints = poses.xy[pose_idx]
+                        confidences = poses.confidence[pose_idx] if hasattr(poses, 'confidence') else None
+
+                        t_sec = frame_index / fps
+
+                        joints = kinematics_standardizer.standardize_keypoints(
+                            video_id=str(video_path.stem),
+                            frame_idx=frame_index,
+                            timestamp_s=t_sec,
+                            player_id=track_id,
+                            keypoints=keypoints,
+                            keypoint_confidences=confidences,
+                            H=H,
+                            team_id=team_id,
+                            jersey_number=None,
+                            shot_id=len(shots) if shots else None,
+                            homography_segment_id=calibrator.current_segment_id if calibrator else 0,
+                            homography_quality=0.0,
+                        )
+                        all_joint_records.extend(joints)
 
             # ---- Shot events
             events = update_shot_events(frame_index, player_dets, shot_tracker, cfg)
@@ -2940,6 +2990,23 @@ def process_video_enhanced(
     # Add pose info
     if pose_pipeline is not None:
         results["pose_tracks"] = len(pose_pipeline.get_all_pose_histories())
+
+    # Kinematics export
+    if kinematics_standardizer is not None and all_joint_records:
+        kinematics_output_dir = cfg.kinematics_output_dir
+        kinematics_output_dir.mkdir(parents=True, exist_ok=True)
+
+        stem = video_path.stem
+        if cfg.kinematics_format == "parquet":
+            kin_path = kinematics_output_dir / f"{stem}_kinematics.parquet"
+            kinematics_standardizer.export_to_parquet(all_joint_records, kin_path)
+        else:
+            kin_path = kinematics_output_dir / f"{stem}_kinematics.csv"
+            kinematics_standardizer.export_to_csv(all_joint_records, kin_path)
+
+        results["kinematics_path"] = str(kin_path)
+        results["kinematics_num_records"] = len(all_joint_records)
+        print(f"[INFO] Kinematics exported: {kin_path} ({len(all_joint_records)} records)")
 
     # Final summary image
     summary_image_path = None

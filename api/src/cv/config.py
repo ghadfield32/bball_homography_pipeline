@@ -533,6 +533,19 @@ def validate_config(cfg: CVConfig) -> None:
         if cfg.three_point_radius_ft <= 0:
             errors.append("Semantic constraints enabled but three_point_radius_ft invalid")
 
+    # Kinematics export validation
+    if cfg.enable_kinematics_export:
+        if cfg.video_fps <= 0:
+            errors.append(
+                "Kinematics export enabled but VIDEO_FPS <= 0. "
+                "Set VIDEO_FPS to a positive integer."
+            )
+        if cfg.kinematics_format not in {"parquet", "csv"}:
+            errors.append(
+                f"Unsupported KINEMATICS_FORMAT '{cfg.kinematics_format}'. "
+                "Use 'parquet' or 'csv'."
+            )
+
     if errors:
         raise ValueError("Config validation failed:\n- " + "\n- ".join(errors))
 
