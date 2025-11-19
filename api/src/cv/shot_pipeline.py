@@ -32,6 +32,11 @@ from sports.basketball import (
 )
 
 from api.src.cv.config import CVConfig, ensure_dirs, load_models, court_base_image
+from api.src.cv.kinematics_standardization import (
+    JointCoordinate,
+    KinematicsStandardizer,
+    create_kinematics_standardizer,
+)
 
 
 # Utility to show images if enabled in config
@@ -2675,6 +2680,368 @@ def process_many_videos(
         )
     return results
 
+
+# ========================================================================
+# ENHANCED PIPELINE WITH TRACKING, SEGMENT HOMOGRAPHY, AND POSE ESTIMATION
+# ========================================================================
+
+def process_video_enhanced(
+    video_path: Path,
+    cfg: CVConfig,
+    player_model,
+    court_model,
+    max_frames: Optional[int] = None,
+) -> Dict:
+    """
+    Enhanced video processing with:
+    - ByteTrack player tracking for persistent IDs
+    - Segment-level homography calibration (optional)
+    - Pose estimation for biomechanics (optional)
+    - Team classification attached to tracks
+
+    Enable features via config:
+    - cfg.enable_tracking = True (default)
+    - cfg.enable_segment_homography = True
+    - cfg.enable_pose_estimation = True
+
+    Returns extended metrics including tracking analytics and pose data.
+    """
+    from api.src.cv.tracker import PlayerTracker, assign_teams_to_detections
+    from api.src.cv.homography_calibrator import HomographyCalibrator
+    from api.src.cv.pose_pipeline import PosePipeline
+
+    ensure_dirs(cfg)
+
+    video_info = sv.VideoInfo.from_video_path(str(video_path))
+    total_frames = getattr(video_info, "total_frames", getattr(video_info, "frame_count", None))
+    frame_gen = sv.get_video_frames_generator(str(video_path))
+    fps = video_info.fps
+
+    # Court sink
+    court_base = court_base_image(cfg)
+    court_h, court_w = court_base.shape[:2]
+    court_info = sv.VideoInfo(width=court_w, height=court_h, fps=fps, total_frames=total_frames)
+
+    # Outputs
+    target_overlay = video_path.parent / f"{video_path.stem}-markers{video_path.suffix}"
+    target_court = video_path.parent / f"{video_path.stem}-court{video_path.suffix}"
+
+    # Event tracker (shot events)
+    shot_tracker = ShotEventTracker(
+        reset_time_frames=int(fps * cfg.reset_time_seconds),
+        minimum_frames_between_starts=int(fps * cfg.min_between_starts_seconds),
+        cooldown_frames_after_made=int(fps * cfg.cooldown_after_made_seconds),
+    )
+
+    # NEW: Player tracker (ByteTrack)
+    player_tracker = None
+    if cfg.enable_tracking:
+        player_tracker = PlayerTracker(
+            track_activation_threshold=cfg.track_activation_threshold,
+            lost_track_buffer=cfg.lost_track_buffer,
+            minimum_matching_threshold=cfg.minimum_matching_threshold,
+            frame_rate=int(fps),
+        )
+        print(f"[INFO] Player tracking enabled (ByteTrack)")
+
+    # NEW: Segment-level homography calibrator
+    calibrator = None
+    if cfg.enable_segment_homography:
+        calibrator = HomographyCalibrator(
+            court_config=cfg.court_config,
+            confidence_threshold=cfg.keypoint_conf_threshold,
+            min_keypoints=cfg.min_keypoints_required,
+            segment_min_frames=cfg.segment_min_frames,
+            segment_change_threshold=cfg.segment_change_threshold,
+        )
+        print(f"[INFO] Segment-level homography enabled")
+
+    # NEW: Pose estimation
+    pose_pipeline = None
+    if cfg.enable_pose_estimation:
+        pose_pipeline = PosePipeline(
+            model_name=cfg.pose_model_name,
+            confidence_threshold=cfg.confidence_threshold,
+        )
+        pose_pipeline.load_model()
+        print(f"[INFO] Pose estimation enabled ({cfg.pose_model_name})")
+
+    # NEW: Kinematics standardization
+    kinematics_standardizer = None
+    all_joint_records: List[JointCoordinate] = []
+    if cfg.enable_kinematics_export:
+        kinematics_standardizer = create_kinematics_standardizer(cfg)
+        print(f"[INFO] Kinematics export enabled ({cfg.kinematics_format})")
+
+    smoother = KeyPointsSmoother(length=cfg.keypoint_smoothing_len)
+    shots: List[Shot] = []
+    shot_in_progress_xy: Optional[np.ndarray] = None
+
+    box_annotator = sv.BoxAnnotator(color=cfg.palette, thickness=2)
+    label_annotator = sv.LabelAnnotator(color=cfg.palette, text_color=sv.Color.BLACK)
+
+    processed_frames = 0
+    event_images: List[str] = []
+    event_img_count = 0
+
+    # Cached transforms (for non-segment mode)
+    last_img2court: Optional[ViewTransformer] = None
+    last_court2img: Optional[ViewTransformer] = None
+    frames_since_good = 1_000_000
+
+    with sv.VideoSink(str(target_overlay), video_info) as sink, \
+        sv.VideoSink(str(target_court), court_info) as court_sink:
+
+        for frame_index, frame in enumerate(frame_gen):
+            if max_frames is not None and processed_frames >= max_frames:
+                break
+
+            # ---- Detect players
+            player_dets = detect_players(frame, player_model, cfg)
+
+            # ---- Team classification
+            groups = group_players_into_teams(frame, player_dets, cfg)
+            team_assignments = assign_teams_to_detections(frame, player_dets, groups)
+
+            # ---- Court keypoints + homography
+            key_points = detect_court_keypoints(frame, court_model, cfg)
+            key_points.xy = smoother.update(
+                xy=key_points.xy,
+                confidence=key_points.confidence,
+                conf_threshold=cfg.keypoint_conf_threshold,
+            )
+
+            # Get homography (segment-based or per-frame)
+            use_img2court = None
+            use_court2img = None
+
+            if calibrator is not None:
+                # Segment-level homography
+                court_vertices = np.array(cfg.court_config.vertices, dtype=np.float32)
+                calibrator.add_observation(frame_index, key_points, court_vertices)
+                use_img2court, use_court2img, quality = calibrator.get_transform(frame_index)
+            else:
+                # Per-frame homography with caching
+                have_t, img2court, court2img = compute_transforms(key_points, cfg)
+                if have_t and img2court is not None and court2img is not None:
+                    last_img2court, last_court2img = img2court, court2img
+                    frames_since_good = 0
+                else:
+                    frames_since_good += 1
+
+                use_img2court = img2court if have_t else last_img2court
+                use_court2img = court2img if have_t else last_court2img
+
+            # ---- Track players
+            tracked_dets = player_dets
+            if player_tracker is not None:
+                tracked_dets = player_tracker.update(
+                    player_dets,
+                    frame_index,
+                    use_img2court,
+                    team_assignments,
+                )
+
+            # ---- Pose estimation
+            poses = None
+            if pose_pipeline is not None and len(tracked_dets) > 0:
+                poses = pose_pipeline.detect_poses(frame)
+                pose_pipeline.add_observations(
+                    frame_index, poses, tracked_dets, use_img2court
+                )
+
+            # ---- Kinematics accumulation (using standardized pose contract)
+            if kinematics_standardizer is not None and poses is not None and pose_pipeline is not None:
+                # Get canonical pose dict per track using standardized contract
+                pose_by_track = pose_pipeline.get_pose_dict_for_tracks(poses, tracked_dets)
+
+                # Get homography matrix for coordinate transformation
+                H = None
+                if use_img2court is not None:
+                    H = use_img2court.m
+
+                # Helper to project joint through homography
+                def project_joint(u_px: float, v_px: float):
+                    if H is None:
+                        return np.nan, np.nan
+                    pt = np.array([u_px, v_px, 1.0], dtype=float)
+                    result = H @ pt
+                    if abs(result[2]) < 1e-8:
+                        return np.nan, np.nan
+                    return float(result[0] / result[2]), float(result[1] / result[2])
+
+                t_sec = frame_index / fps
+
+                # Process each tracked player with canonical joints
+                for track_id, joints_dict in pose_by_track.items():
+                    # Get team assignment for this track
+                    team_id = -1
+                    if tracked_dets.tracker_id is not None:
+                        for i, det_tracker_id in enumerate(tracked_dets.tracker_id):
+                            if int(det_tracker_id) == track_id:
+                                team_id = team_assignments.get(i, -1) if team_assignments else -1
+                                break
+
+                    # Build joint coordinates for kinematics
+                    for joint_name, (u_px, v_px, conf, vis) in joints_dict.items():
+                        x_court, y_court = project_joint(u_px, v_px)
+
+                        # Create JointCoordinate record directly
+                        joint_record = JointCoordinate(
+                            video_id=str(video_path.stem),
+                            frame_idx=frame_index,
+                            timestamp_s=t_sec,
+                            player_id=track_id,
+                            team_id=team_id,
+                            jersey_number=None,
+                            joint=joint_name,
+                            u_px=u_px,
+                            v_px=v_px,
+                            x_court_m=x_court,
+                            y_court_m=y_court,
+                            x_world_m=x_court,
+                            y_world_m=y_court,
+                            z_world_m=0.0,  # Court plane
+                            joint_confidence=conf,
+                            homography_quality=0.0,
+                            homography_segment_id=calibrator.current_segment_id if calibrator else 0,
+                            shot_id=len(shots) if shots else None,
+                        )
+                        all_joint_records.append(joint_record)
+
+            # ---- Shot events
+            events = update_shot_events(frame_index, player_dets, shot_tracker, cfg)
+            if events:
+                start_events = [e for e in events if e["event"] == "START"]
+                made_events = [e for e in events if e["event"] == "MADE"]
+                missed_events = [e for e in events if e["event"] == "MISSED"]
+
+                if start_events and use_img2court is not None:
+                    anchors_img_shooter = player_dets[
+                        (player_dets.class_id == cfg.JUMP_SHOT_CLASS_ID) |
+                        (player_dets.class_id == cfg.LAYUP_DUNK_CLASS_ID)
+                    ].get_anchors_coordinates(anchor=sv.Position.BOTTOM_CENTER)
+                    if anchors_img_shooter is not None and len(anchors_img_shooter) > 0:
+                        anchors_court = use_img2court.transform_points(anchors_img_shooter)
+                        shot_in_progress_xy = anchors_court[0]
+
+                if made_events and shot_in_progress_xy is not None:
+                    shots.append(Shot(
+                        x=float(shot_in_progress_xy[0]),
+                        y=float(shot_in_progress_xy[1]),
+                        distance=euclidean_distance(
+                            shot_in_progress_xy,
+                            cfg.court_config.vertices[cfg.court_config.left_basket_index],
+                        ),
+                        result=True,
+                        team=0,
+                    ))
+                    shot_in_progress_xy = None
+
+                if missed_events and shot_in_progress_xy is not None:
+                    shots.append(Shot(
+                        x=float(shot_in_progress_xy[0]),
+                        y=float(shot_in_progress_xy[1]),
+                        distance=euclidean_distance(
+                            shot_in_progress_xy,
+                            cfg.court_config.vertices[cfg.court_config.left_basket_index],
+                        ),
+                        result=False,
+                        team=0,
+                    ))
+                    shot_in_progress_xy = None
+
+                # Save event frames
+                if cfg.save_event_frames and event_img_count < cfg.event_frame_limit:
+                    annotated_event = frame.copy()
+                    annotated_event = box_annotator.annotate(scene=annotated_event, detections=tracked_dets)
+                    annotated_event = label_annotator.annotate(scene=annotated_event, detections=tracked_dets)
+                    event_type = events[0]["event"]
+                    out = video_path.parent / f"{video_path.stem}-event_{frame_index:06d}_{event_type}.jpg"
+                    _save_image(out, annotated_event)
+                    event_images.append(str(out))
+                    event_img_count += 1
+
+            # ---- Broadcast overlay
+            annotated = annotate_broadcast_overlay(
+                frame=frame,
+                shots=shots,
+                court_to_image=use_court2img,
+                cfg=cfg,
+                box_annotator=box_annotator,
+                label_annotator=label_annotator,
+            )
+            sink.write_frame(annotated)
+
+            # ---- Court map
+            court_frame = render_court_map(shots, court_base, cfg)
+            court_sink.write_frame(court_frame)
+
+            processed_frames += 1
+
+    # Finalize calibrator
+    if calibrator is not None:
+        calibrator.finalize()
+
+    # Collect results
+    results = {
+        "video": str(video_path),
+        "overlay_out": str(target_overlay),
+        "court_out": str(target_court),
+        "frames": processed_frames,
+        "shots_total": len(shots),
+        "shots_made": sum(1 for s in shots if s.result),
+        "shots_missed": sum(1 for s in shots if not s.result),
+        "event_images": event_images,
+    }
+
+    # Add tracking analytics
+    if player_tracker is not None:
+        results["tracking_analytics"] = player_tracker.get_analytics()
+        results["total_tracks"] = len(player_tracker._tracks)
+
+    # Add calibration info
+    if calibrator is not None:
+        segments = calibrator.get_all_segments()
+        results["homography_segments"] = len(segments)
+        results["segment_quality"] = [
+            {"id": s.segment_id, "rmse_court": s.rmse_court, "inliers": s.inlier_count}
+            for s in segments if s.is_calibrated
+        ]
+
+    # Add pose info
+    if pose_pipeline is not None:
+        results["pose_tracks"] = len(pose_pipeline.get_all_pose_histories())
+
+    # Kinematics export
+    if kinematics_standardizer is not None and all_joint_records:
+        kinematics_output_dir = cfg.kinematics_output_dir
+        kinematics_output_dir.mkdir(parents=True, exist_ok=True)
+
+        stem = video_path.stem
+        if cfg.kinematics_format == "parquet":
+            kin_path = kinematics_output_dir / f"{stem}_kinematics.parquet"
+            kinematics_standardizer.export_to_parquet(all_joint_records, kin_path)
+        else:
+            kin_path = kinematics_output_dir / f"{stem}_kinematics.csv"
+            kinematics_standardizer.export_to_csv(all_joint_records, kin_path)
+
+        results["kinematics_path"] = str(kin_path)
+        results["kinematics_num_records"] = len(all_joint_records)
+        print(f"[INFO] Kinematics exported: {kin_path} ({len(all_joint_records)} records)")
+
+    # Final summary image
+    summary_image_path = None
+    if cfg.emit_summary_image:
+        summary_image_path = save_final_court_image(
+            video_path=video_path,
+            shots=shots,
+            court_base=court_base,
+            cfg=cfg,
+        )
+        results["final_court_image"] = str(summary_image_path) if summary_image_path else None
+
+    return results
 
 
 """

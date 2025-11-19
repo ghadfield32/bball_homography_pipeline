@@ -5,7 +5,539 @@
 
 ---
 
-## [Current] CV Pipeline Function Missing Fix - 2025-11-19
+## [Current] CV Pipeline Enhancements Phase 3 - API, Streaming, Shot Arc, Re-ID - 2025-11-19
+
+### 🎯 Objective
+Add production-ready API endpoints, real-time streaming, shot arc analysis, and visual re-identification for complete pipeline exposure.
+
+### ✅ Config Reorganization & Roboflow Alignment
+
+**Modified File**: `api/src/cv/config.py` (complete rewrite ~400 lines)
+
+Reorganized into 12 logical sections with clear headers:
+1. Workspace & IO
+2. Detection Models (all Roboflow models grouped)
+3. Detection Thresholds
+4. Tracking (ByteTrack + SAM2)
+5. Homography & ViewTransformer
+6. Jersey OCR & Player Identity
+7. Pose Estimation & Biomechanics
+8. Shot Arc Analysis
+9. Visual Re-ID (SigLIP)
+10. API & WebSocket Streaming
+11. Visualization & Debug
+12. Shot Event Logic
+
+**New Roboflow-aligned parameters added:**
+- SAM2 tracking: `enable_sam2_tracking`, `sam2_model_size`, `sam2_points_per_side`
+- SmolVLM2 OCR: `smolvlm2_model_name`, `jersey_ocr_type` supports "smolvlm2"
+- Semantic constraints: `enable_semantic_constraints`, `line_collinearity_threshold_ft`, `arc_radius_threshold_ft`
+- Zone detection: `enable_zone_detection`, `zone_dwell_threshold_frames`
+- Re-ID parameters: `reid_max_age_frames`, `reid_embedding_history`
+- Jersey model: `jersey_number_model_id` for YOLO classifier approach
+- Pose biomechanics: `enable_shot_form_analysis`, `release_point_min_frames`
+
+**New helper functions:**
+- `load_ball_model()` - Load ball detection model
+- `load_jersey_model()` - Load jersey number model
+- `get_enabled_features()` - Summary of all enabled features
+
+### ✅ FastAPI CV Endpoints
+
+**New File**: `api/src/cv/api_endpoints.py` (~400 lines)
+
+REST API for pipeline access:
+- `POST /process` - Upload video for async processing
+- `GET /jobs/{job_id}` - Get job status and progress
+- `GET /jobs/{job_id}/shots` - Get shot events for completed job
+- `GET /jobs/{job_id}/tracks` - Get tracking info
+- `POST /analyze/frame` - Analyze single frame
+- `GET /config` - Get current configuration
+- `GET /health` - Health check
+
+Usage:
+```bash
+uvicorn api.src.cv.api_endpoints:app --host 0.0.0.0 --port 8000
+```
+
+### ✅ Shot Arc Analysis Module
+
+**New File**: `api/src/cv/shot_arc.py` (~450 lines)
+
+Ball trajectory analysis:
+- `ShotArcAnalyzer` class with ball detection and tracking
+- `ArcMetrics` dataclass with release angle, entry angle, apex height, velocity
+- Parabolic curve fitting with R-squared validation
+- Trajectory smoothing and velocity computation
+- Scale estimation from ball size
+
+Key metrics computed:
+- Release angle (degrees)
+- Entry angle (degrees)
+- Apex height (pixels/feet)
+- Release velocity (pixels/frame or ft/s)
+
+Usage:
+```python
+from api.src.cv.shot_arc import create_shot_arc_analyzer
+
+analyzer = create_shot_arc_analyzer(cfg)
+metrics = analyzer.analyze_shot_arc(start_frame, end_frame, fps=30)
+print(f"Release angle: {metrics.release_angle}°")
+```
+
+### ✅ SigLIP Visual Re-Identification
+
+**New File**: `api/src/cv/siglip_reid.py` (~400 lines)
+
+Appearance-based re-identification:
+- `SigLIPReID` class using HuggingFace SigLIP model
+- `EmbeddingHistory` with temporal weighting
+- Cosine similarity matching
+- Track merging across camera cuts
+
+Features:
+- Embedding extraction from player crops
+- Similarity matrix computation
+- Lost track detection and matching
+- Configurable similarity threshold
+
+Usage:
+```python
+from api.src.cv.siglip_reid import create_siglip_reid
+
+reid = create_siglip_reid(cfg)
+reid.update(frame, tracked_dets, frame_idx)
+matches = reid.attempt_reidentification(new_track_ids, frame_idx)
+```
+
+### ✅ WebSocket Streaming
+
+**New File**: `api/src/cv/websocket_stream.py` (~350 lines)
+
+Real-time video processing:
+- `WebSocketStreamServer` class
+- Per-session state management
+- Frame-by-frame processing with immediate results
+- JSON command protocol (ping, reset, stats)
+
+Usage:
+```bash
+python -m api.src.cv.websocket_stream
+# Server starts on ws://localhost:8765
+```
+
+Client example (JavaScript):
+```javascript
+const ws = new WebSocket('ws://localhost:8765');
+ws.send(frameData);  // Send JPEG frame
+ws.onmessage = (e) => {
+    const result = JSON.parse(e.data);
+    // result.players, result.shot_event, etc.
+};
+```
+
+### ✅ Kinematics Standardization & SPL Alignment
+
+**New Files**:
+- `api/src/cv/kinematics_standardization.py` (~500 lines)
+- `api/src/biomech/spl_adapter.py` (~450 lines)
+- `api/src/biomech/__init__.py`
+- `KINEMATICS_STANDARD.md` (comprehensive documentation)
+
+Unified coordinate system for CV + biomechanics:
+- Image space: `(u_px, v_px)` - pixels
+- Court space: `(x_court_m, y_court_m)` - metres, origin court center
+- World space: `(x_world_m, y_world_m, z_world_m)` - metres, z up
+
+Key features:
+- `JointCoordinate` dataclass with standardized schema
+- `KinematicsStandardizer` class for COCO → canonical conversion
+- `SPLAdapter` for SPL-Open-Data loading with Kabsch transform
+- Height estimation from anthropometric ratios
+- Parquet/CSV export for mplbasketball compatibility
+
+Config parameters added:
+- `enable_kinematics_export`, `kinematics_court_type`, `kinematics_output_units`
+- `default_player_height_m`, `estimate_z_from_ratios`
+- `spl_fps`, `spl_dataset_id`, `kinematics_format`
+
+### ✅ Config Automation & Profiles
+
+**Modified File**: `api/src/cv/config.py` (+200 lines)
+**New File**: `CV_PIPELINE_LOG.md`
+
+Added profile system for automated feature configuration:
+- `cv_profile` env var: fast_debug, tracking_only, full_biomech, live_stream
+- Profiles auto-set multiple feature flags for common use cases
+
+New helper functions:
+- `load_cv_config()` - Load, validate, and return configured CVConfig
+- `validate_config()` - Fail-fast validation for required parameters
+- `describe_cv_config()` - Human-readable summary for logging
+- `apply_profile_to_env()` - Programmatic profile switching
+
+Usage:
+```python
+from api.src.cv.config import load_cv_config, describe_cv_config
+
+cfg = load_cv_config()
+print(describe_cv_config(cfg))
+```
+
+Or set profile via env:
+```bash
+export CV_PROFILE=full_biomech
+python -m api.src.cv.shot_pipeline video.mp4
+```
+
+### ✅ Kinematics Pipeline Integration
+
+**Modified Files**:
+- `api/src/cv/config.py` - Added kinematics export validation
+- `api/src/cv/shot_pipeline.py` - Integrated kinematics collection
+- `api/src/biomech/spl_adapter.py` - Added spl_trial_to_parquet helper
+
+Wired kinematics export into CV pipeline:
+- `process_video_enhanced()` accumulates `JointCoordinate` per frame when pose is enabled
+- Exports standardized kinematics table at end (parquet/csv)
+- Uses homography matrix for image→court coordinate transformation
+
+Validation added:
+- `video_fps > 0` required when kinematics export enabled
+- `kinematics_format` must be 'parquet' or 'csv'
+
+New helper function:
+- `spl_trial_to_parquet()` - Direct SPL CSV → parquet conversion
+
+Usage:
+```bash
+export CV_PROFILE=full_biomech
+export ENABLE_KINEMATICS_EXPORT=1
+python -m api.src.cv.shot_pipeline video.mp4
+# Outputs: kinematics/{video}_kinematics.parquet
+```
+
+SPL usage:
+```python
+from api.src.biomech.spl_adapter import spl_trial_to_parquet
+
+out = spl_trial_to_parquet(
+    csv_path="data/spl/trial.csv",
+    output_dir="output/kinematics",
+    trial_id=1,
+)
+```
+
+### ✅ YOLO Pose Standardization
+
+**Modified Files**:
+- `api/src/cv/pose_pipeline.py` - Added canonical joint mapping and standardized contract
+- `api/src/cv/shot_pipeline.py` - Updated kinematics accumulation to use standardized contract
+
+Standardized pose-to-kinematics pipeline:
+- Added `JOINT_ID_TO_CANONICAL` mapping (COCO → R_WRIST/L_KNEE/HEAD/etc)
+- Added `get_pose_dict_for_tracks()` method returning `{track_id: {joint: (u, v, conf, vis)}}`
+- HEAD joint derived from NOSE; duplicate face landmarks (eyes, ears) skipped
+- Shot pipeline now uses standardized contract for per-joint homography projection
+
+Joint name contract:
+```python
+# 13 joints total: 12 body + HEAD from NOSE
+JOINT_ID_TO_CANONICAL = {
+    JointID.NOSE: "HEAD",
+    JointID.LEFT_SHOULDER: "L_SHOULDER",
+    JointID.RIGHT_SHOULDER: "R_SHOULDER",
+    JointID.LEFT_ELBOW: "L_ELBOW",
+    JointID.RIGHT_ELBOW: "R_ELBOW",
+    JointID.LEFT_WRIST: "L_WRIST",
+    JointID.RIGHT_WRIST: "R_WRIST",
+    JointID.LEFT_HIP: "L_HIP",
+    JointID.RIGHT_HIP: "R_HIP",
+    JointID.LEFT_KNEE: "L_KNEE",
+    JointID.RIGHT_KNEE: "R_KNEE",
+    JointID.LEFT_ANKLE: "L_ANKLE",
+    JointID.RIGHT_ANKLE: "R_ANKLE",
+}
+```
+
+### ✅ Kinematics Validation & Debug Tools
+
+**New Files**:
+- `tools/visualize_kinematics_overlay.py` - Visual sanity check tool (~300 lines)
+
+**Modified Files**:
+- `api/src/cv/config.py` - Added cv_debug_kinematics profile
+
+Features:
+- Visualization tool overlays joints from kinematics parquet onto video frames
+- Validates canonical joint names (HEAD, R_WRIST, L_KNEE, etc.)
+- Draws skeleton connections and player labels
+- Prints frame stats with court coordinates
+
+New profile `cv_debug_kinematics`:
+- Minimal features for fast kinematics validation
+- Enables: tracking, homography, pose, kinematics_export
+- Disables: arc analysis, re-ID, OCR, streaming
+
+Usage:
+```bash
+# Run pipeline with debug profile
+export CV_PROFILE=cv_debug_kinematics
+python -m api.src.cv.shot_pipeline video.mp4
+
+# Visualize output
+python -m tools.visualize_kinematics_overlay \
+  --video video.mp4 \
+  --kinematics kinematics/video_kinematics.parquet \
+  --every-n-frames 10
+```
+
+### 📊 Files Changed Summary
+
+| File | Action | Lines |
+|------|--------|-------|
+| `api/src/cv/config.py` | MODIFIED | +120 |
+| `api/src/cv/shot_pipeline.py` | MODIFIED | +80 |
+| `api/src/cv/pose_pipeline.py` | MODIFIED | +80 |
+| `tools/visualize_kinematics_overlay.py` | NEW | ~300 |
+| `api/src/cv/api_endpoints.py` | NEW | ~400 |
+| `api/src/cv/shot_arc.py` | NEW | ~450 |
+| `api/src/cv/siglip_reid.py` | NEW | ~400 |
+| `api/src/cv/websocket_stream.py` | NEW | ~350 |
+| `api/src/cv/kinematics_standardization.py` | NEW | ~500 |
+| `api/src/biomech/spl_adapter.py` | MODIFIED | +60 |
+| `KINEMATICS_STANDARD.md` | NEW | ~350 |
+| `CV_PIPELINE_LOG.md` | MODIFIED | +20 |
+
+### ⚠️ New Dependencies
+
+Optional dependencies for Phase 3 features:
+```bash
+# For SigLIP re-ID
+pip install transformers torch
+
+# For WebSocket streaming
+pip install websockets
+
+# Already included: fastapi, uvicorn
+```
+
+---
+
+## [Previous] CV Pipeline Enhancements Phase 2 - Tuning, Constraints, OCR, Testing - 2025-11-19
+
+### 🎯 Objective
+Enhance pipeline with basketball-specific tuning, semantic validation, jersey OCR, and test utilities.
+
+### ✅ ByteTrack Parameter Tuning for Basketball
+
+**Modified Files**: `api/src/cv/tracker.py`, `api/src/cv/config.py`
+
+Tuned defaults for basketball-specific tracking challenges:
+- `track_activation_threshold`: 0.25 → 0.20 (catch partially occluded players)
+- `lost_track_buffer`: 30 → 60 frames (~2s for drives/screens)
+- `minimum_matching_threshold`: 0.8 → 0.6 (accommodate fast-moving players)
+- `minimum_consecutive_frames`: 1 → 2 (reduce flickering)
+
+### ✅ Semantic Constraints for Homography
+
+**Modified File**: `api/src/cv/homography_calibrator.py` (+140 lines)
+
+Added validation methods:
+- `_validate_line_collinearity()`: Ensures baseline/sideline points remain collinear
+- `_validate_arc_radius()`: Validates 3-point arc radius (~23.75ft)
+- `validate_semantic_constraints()`: Main validation orchestrator
+
+New configuration:
+```python
+enable_semantic_constraints: bool = True
+line_collinearity_threshold: float = 0.5  # feet
+arc_radius_threshold: float = 1.0  # feet
+three_point_radius_ft: float = 23.75  # NBA standard
+```
+
+### ✅ Jersey Number OCR Module
+
+**New File**: `api/src/cv/jersey_ocr.py` (~350 lines)
+
+Features:
+- `JerseyOCR` class with pluggable OCR backends (EasyOCR, PaddleOCR)
+- `TrackNumberHistory` with majority voting for stable number assignments
+- Per-track number persistence and confidence scoring
+- Track merging for re-identification across camera cuts
+- Number region extraction from player bounding boxes
+
+Usage:
+```python
+from api.src.cv.jersey_ocr import JerseyOCR
+
+ocr = JerseyOCR()
+ocr.load_model("easyocr")  # or "paddleocr"
+
+numbers = ocr.detect_and_update(frame, tracked_dets)
+player_number = ocr.get_track_number(track_id)
+```
+
+### ✅ Test Utilities
+
+**New File**: `api/src/cv/test_pipeline.py` (~400 lines)
+
+Comprehensive test suite:
+- `test_tracker_module()`: PlayerTracker, TrackState, analytics
+- `test_homography_calibrator()`: Calibrator, SegmentData, semantic validation
+- `test_pose_pipeline()`: PosePipeline, PoseObservation, PlayerPoseHistory
+- `test_jersey_ocr()`: JerseyOCR, number history, track merging
+- `test_config()`: Verify all new config parameters
+
+Run tests:
+```bash
+python -m api.src.cv.test_pipeline
+python -m api.src.cv.test_pipeline --component tracker
+```
+
+### 📊 Files Changed Summary
+
+| File | Action | Lines |
+|------|--------|-------|
+| `api/src/cv/tracker.py` | MODIFIED | +15 |
+| `api/src/cv/config.py` | MODIFIED | +5 |
+| `api/src/cv/homography_calibrator.py` | MODIFIED | +140 |
+| `api/src/cv/jersey_ocr.py` | NEW | ~350 |
+| `api/src/cv/test_pipeline.py` | NEW | ~400 |
+
+---
+
+## [Previous] CV Pipeline Enhancements Phase 1 - Tracking, Homography, Pose - 2025-11-19
+
+### 🎯 Objective
+Add production-grade enhancements to the CV pipeline: persistent player tracking, segment-level homography, and pose estimation for biomechanics analysis.
+
+### ✅ Phase 1: ByteTrack Player Tracking Module
+
+**New File**: `api/src/cv/tracker.py` (~300 lines)
+
+Key features:
+- `PlayerTracker` class using supervision's ByteTrack for multi-object tracking
+- `TrackState` dataclass with history, team voting, and analytics (speed, distance)
+- Persistent track IDs across frames with configurable parameters
+- Team label attachment using majority voting for stability
+- Integration helper `assign_teams_to_detections()` for existing pipeline
+
+Configuration (in `config.py`):
+```python
+enable_tracking: bool = True
+track_activation_threshold: float = 0.25
+lost_track_buffer: int = 30
+minimum_matching_threshold: float = 0.8
+```
+
+### ✅ Phase 2: Segment-Level Homography Calibrator
+
+**New File**: `api/src/cv/homography_calibrator.py` (~400 lines)
+
+Key features:
+- `HomographyCalibrator` class for multi-frame H optimization
+- Camera segment detection via keypoint centroid jumps
+- Aggregates keypoints across segment frames for robust fit
+- RANSAC + weighted least-squares refinement
+- Quality metrics (RMSE court/image) per segment
+- Interpolation for unreliable frames
+- `get_quality_mask()` for downstream confidence-aware analytics
+
+Configuration:
+```python
+enable_segment_homography: bool = False  # Off by default
+segment_min_frames: int = 10
+segment_change_threshold: float = 50.0  # pixels
+```
+
+### ✅ Phase 3: Pose Estimation Pipeline
+
+**New File**: `api/src/cv/pose_pipeline.py` (~450 lines)
+
+Key features:
+- `PosePipeline` class using YOLO-pose models (yolov8n-pose, yolov8s-pose, yolov8m-pose)
+- `PoseObservation` and `PlayerPoseHistory` for per-track pose data
+- 17-keypoint COCO skeleton with court coordinate transformation
+- Joint trajectory extraction for any keypoint
+- `get_release_point_estimate()` for shot analysis
+- `analyze_shot_form()` for elbow angle and joint sequences
+
+Configuration:
+```python
+enable_pose_estimation: bool = False  # Off by default
+pose_model_name: str = "yolov8n-pose"
+video_fps: int = 30
+```
+
+### ✅ Phase 4: Enhanced Pipeline Integration
+
+**Modified File**: `api/src/cv/shot_pipeline.py` (+280 lines)
+
+New function `process_video_enhanced()` at line 2683:
+- Integrates all three new modules with existing pipeline
+- Team classification attached to tracks (stable labels)
+- Returns extended metrics: tracking_analytics, homography_segments, pose_tracks
+- Backward compatible - original `process_video()` unchanged
+
+**Modified File**: `api/src/cv/config.py` (+20 lines)
+
+Added configuration sections for:
+- Tracking parameters
+- Segment-level homography
+- Pose estimation
+- Video frame rate
+
+### 📊 Files Changed Summary
+
+| File | Action | Lines |
+|------|--------|-------|
+| `api/src/cv/tracker.py` | NEW | ~300 |
+| `api/src/cv/homography_calibrator.py` | NEW | ~400 |
+| `api/src/cv/pose_pipeline.py` | NEW | ~450 |
+| `api/src/cv/shot_pipeline.py` | MODIFIED | +280 |
+| `api/src/cv/config.py` | MODIFIED | +20 |
+
+### 🔧 Usage
+
+```python
+from api.src.cv.config import CVConfig
+from api.src.cv.shot_pipeline import process_video_enhanced
+
+cfg = CVConfig()
+cfg.enable_tracking = True
+cfg.enable_segment_homography = True
+cfg.enable_pose_estimation = True
+
+results = process_video_enhanced(
+    video_path=video_path,
+    cfg=cfg,
+    player_model=player_model,
+    court_model=court_model,
+)
+
+# Extended results include:
+# - tracking_analytics: {total_tracks, active_tracks, team_counts, avg_distance_ft, max_speed_fps}
+# - homography_segments: number of camera segments detected
+# - segment_quality: [{id, rmse_court, inliers}, ...]
+# - pose_tracks: number of players with pose data
+```
+
+### ⚠️ Dependencies
+No new dependencies - uses existing:
+- `supervision>=0.26` (ByteTrack built-in)
+- `ultralytics==8.3.158` (YOLO-pose models)
+
+### 📋 Next Steps
+- Test with sample videos to validate tracking accuracy
+- Tune ByteTrack parameters for basketball occlusions
+- Add jersey number OCR for player re-identification
+- Implement semantic constraints for homography (line-on-line, arc radius)
+
+---
+
+## [Previous] CV Pipeline Function Missing Fix - 2025-11-19
 
 ### 🎯 Objective
 Fix `NameError: name 'finalize_smoke_outputs' is not defined` in `piotr_automated_pipeline copy.ipynb`
