@@ -5,7 +5,90 @@
 
 ---
 
-## [Current] CV Pipeline Enhancements - Player Tracking, Segment Homography, Pose Estimation - 2025-11-19
+## [Current] CV Pipeline Enhancements Phase 2 - Tuning, Constraints, OCR, Testing - 2025-11-19
+
+### 🎯 Objective
+Enhance pipeline with basketball-specific tuning, semantic validation, jersey OCR, and test utilities.
+
+### ✅ ByteTrack Parameter Tuning for Basketball
+
+**Modified Files**: `api/src/cv/tracker.py`, `api/src/cv/config.py`
+
+Tuned defaults for basketball-specific tracking challenges:
+- `track_activation_threshold`: 0.25 → 0.20 (catch partially occluded players)
+- `lost_track_buffer`: 30 → 60 frames (~2s for drives/screens)
+- `minimum_matching_threshold`: 0.8 → 0.6 (accommodate fast-moving players)
+- `minimum_consecutive_frames`: 1 → 2 (reduce flickering)
+
+### ✅ Semantic Constraints for Homography
+
+**Modified File**: `api/src/cv/homography_calibrator.py` (+140 lines)
+
+Added validation methods:
+- `_validate_line_collinearity()`: Ensures baseline/sideline points remain collinear
+- `_validate_arc_radius()`: Validates 3-point arc radius (~23.75ft)
+- `validate_semantic_constraints()`: Main validation orchestrator
+
+New configuration:
+```python
+enable_semantic_constraints: bool = True
+line_collinearity_threshold: float = 0.5  # feet
+arc_radius_threshold: float = 1.0  # feet
+three_point_radius_ft: float = 23.75  # NBA standard
+```
+
+### ✅ Jersey Number OCR Module
+
+**New File**: `api/src/cv/jersey_ocr.py` (~350 lines)
+
+Features:
+- `JerseyOCR` class with pluggable OCR backends (EasyOCR, PaddleOCR)
+- `TrackNumberHistory` with majority voting for stable number assignments
+- Per-track number persistence and confidence scoring
+- Track merging for re-identification across camera cuts
+- Number region extraction from player bounding boxes
+
+Usage:
+```python
+from api.src.cv.jersey_ocr import JerseyOCR
+
+ocr = JerseyOCR()
+ocr.load_model("easyocr")  # or "paddleocr"
+
+numbers = ocr.detect_and_update(frame, tracked_dets)
+player_number = ocr.get_track_number(track_id)
+```
+
+### ✅ Test Utilities
+
+**New File**: `api/src/cv/test_pipeline.py` (~400 lines)
+
+Comprehensive test suite:
+- `test_tracker_module()`: PlayerTracker, TrackState, analytics
+- `test_homography_calibrator()`: Calibrator, SegmentData, semantic validation
+- `test_pose_pipeline()`: PosePipeline, PoseObservation, PlayerPoseHistory
+- `test_jersey_ocr()`: JerseyOCR, number history, track merging
+- `test_config()`: Verify all new config parameters
+
+Run tests:
+```bash
+python -m api.src.cv.test_pipeline
+python -m api.src.cv.test_pipeline --component tracker
+```
+
+### 📊 Files Changed Summary
+
+| File | Action | Lines |
+|------|--------|-------|
+| `api/src/cv/tracker.py` | MODIFIED | +15 |
+| `api/src/cv/config.py` | MODIFIED | +5 |
+| `api/src/cv/homography_calibrator.py` | MODIFIED | +140 |
+| `api/src/cv/jersey_ocr.py` | NEW | ~350 |
+| `api/src/cv/test_pipeline.py` | NEW | ~400 |
+
+---
+
+## [Previous] CV Pipeline Enhancements Phase 1 - Tracking, Homography, Pose - 2025-11-19
 
 ### 🎯 Objective
 Add production-grade enhancements to the CV pipeline: persistent player tracking, segment-level homography, and pose estimation for biomechanics analysis.

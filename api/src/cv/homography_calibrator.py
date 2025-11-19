@@ -91,6 +91,12 @@ class HomographyCalibrator:
     rmse_court_max: float = 1.5  # feet
     rmse_image_max: float = 5.0  # pixels
 
+    # Semantic constraint parameters
+    enable_semantic_constraints: bool = True
+    line_collinearity_threshold: float = 0.5  # feet - max deviation from line
+    arc_radius_threshold: float = 1.0  # feet - max deviation from expected radius
+    three_point_radius_ft: float = 23.75  # NBA 3-point arc radius
+
     # Internal state
     _segments: List[SegmentData] = field(default_factory=list)
     _current_segment: Optional[SegmentData] = field(default=None, init=False)
@@ -103,6 +109,146 @@ class HomographyCalibrator:
         self._current_segment = None
         self._last_keypoint_centroid = None
         self._frame_to_segment = {}
+
+    def _validate_line_collinearity(
+        self, H: np.ndarray, line_points_image: np.ndarray
+    ) -> Tuple[bool, float]:
+        """
+        Validate that collinear points in image space remain collinear after transformation.
+
+        Args:
+            H: Homography matrix (3x3)
+            line_points_image: Points that should be collinear (N, 2)
+
+        Returns:
+            (is_valid, max_deviation_ft)
+        """
+        if len(line_points_image) < 3:
+            return True, 0.0
+
+        # Transform points to court space
+        pts = cv2.perspectiveTransform(
+            line_points_image.reshape(-1, 1, 2).astype(np.float32), H
+        ).reshape(-1, 2)
+
+        # Fit a line using SVD (robust to outliers)
+        centroid = np.mean(pts, axis=0)
+        centered = pts - centroid
+        _, _, vh = np.linalg.svd(centered)
+        direction = vh[0]  # Principal direction
+
+        # Compute perpendicular distances to line
+        normal = np.array([-direction[1], direction[0]])
+        distances = np.abs(np.dot(centered, normal))
+        max_deviation = float(np.max(distances))
+
+        is_valid = max_deviation <= self.line_collinearity_threshold
+        return is_valid, max_deviation
+
+    def _validate_arc_radius(
+        self, H: np.ndarray, arc_points_image: np.ndarray, center_court: np.ndarray
+    ) -> Tuple[bool, float]:
+        """
+        Validate that arc points maintain expected radius from center.
+
+        Args:
+            H: Homography matrix (3x3)
+            arc_points_image: Points on the arc in image coords (N, 2)
+            center_court: Expected arc center in court coords (2,)
+
+        Returns:
+            (is_valid, radius_deviation_ft)
+        """
+        if len(arc_points_image) < 3:
+            return True, 0.0
+
+        # Transform points to court space
+        pts = cv2.perspectiveTransform(
+            arc_points_image.reshape(-1, 1, 2).astype(np.float32), H
+        ).reshape(-1, 2)
+
+        # Compute distances from center
+        distances = np.linalg.norm(pts - center_court, axis=1)
+        mean_radius = float(np.mean(distances))
+
+        # Check deviation from expected radius
+        radius_deviation = abs(mean_radius - self.three_point_radius_ft)
+        is_valid = radius_deviation <= self.arc_radius_threshold
+
+        return is_valid, radius_deviation
+
+    def validate_semantic_constraints(
+        self, H: np.ndarray, img_pts: np.ndarray, court_pts: np.ndarray
+    ) -> Dict:
+        """
+        Validate semantic constraints for a homography.
+
+        Checks:
+        1. Line collinearity for baseline/sideline points
+        2. Arc radius for 3-point line points
+
+        Args:
+            H: Homography matrix
+            img_pts: Image keypoints (N, 2)
+            court_pts: Corresponding court points (N, 2)
+
+        Returns:
+            Dict with validation results
+        """
+        results = {
+            "is_valid": True,
+            "line_valid": True,
+            "arc_valid": True,
+            "line_deviation_ft": 0.0,
+            "arc_deviation_ft": 0.0,
+            "warnings": []
+        }
+
+        if not self.enable_semantic_constraints:
+            return results
+
+        # Get court vertices for reference
+        vertices = np.array(self.court_config.vertices, dtype=np.float32)
+
+        # Identify baseline points (y = 0 or y = 50 for NBA)
+        # Find points with similar y-coordinates
+        y_coords = court_pts[:, 1]
+
+        # Group by approximate y-value to find lines
+        baseline_mask = np.abs(y_coords - 0) < 2.0  # Near y=0
+        opposite_baseline_mask = np.abs(y_coords - 50) < 2.0  # Near y=50
+
+        # Validate baselines
+        for mask, name in [(baseline_mask, "baseline"), (opposite_baseline_mask, "opposite_baseline")]:
+            if np.sum(mask) >= 3:
+                line_pts = img_pts[mask]
+                is_valid, deviation = self._validate_line_collinearity(H, line_pts)
+                if not is_valid:
+                    results["line_valid"] = False
+                    results["is_valid"] = False
+                    results["warnings"].append(f"{name} collinearity failed: {deviation:.2f}ft")
+                results["line_deviation_ft"] = max(results["line_deviation_ft"], deviation)
+
+        # Validate 3-point arc if we have arc points
+        # Arc points are typically at radius ~23.75ft from basket
+        # For now, we'll check if any points are near the expected arc distance
+        basket_left = np.array([5.25, 25.0])  # Left basket position (feet)
+        basket_right = np.array([88.75, 25.0])  # Right basket position (feet)
+
+        for basket, name in [(basket_left, "left_arc"), (basket_right, "right_arc")]:
+            distances_from_basket = np.linalg.norm(court_pts - basket, axis=1)
+            arc_mask = np.abs(distances_from_basket - self.three_point_radius_ft) < 3.0
+
+            if np.sum(arc_mask) >= 3:
+                arc_pts = img_pts[arc_mask]
+                is_valid, deviation = self._validate_arc_radius(H, arc_pts, basket)
+                if not is_valid:
+                    results["arc_valid"] = False
+                    results["is_valid"] = False
+                    results["warnings"].append(f"{name} radius failed: {deviation:.2f}ft")
+                results["arc_deviation_ft"] = max(results["arc_deviation_ft"], deviation)
+
+        return results
 
     def add_observation(
         self,
@@ -293,11 +439,20 @@ class HomographyCalibrator:
         segment.rmse_image = rmse_image
         segment.inlier_count = inlier_count
 
+        # Validate semantic constraints (soft validation - log warnings but don't reject)
+        semantic_results = self.validate_semantic_constraints(H_refined, inlier_img, inlier_court)
+
+        constraint_info = ""
+        if semantic_results["warnings"]:
+            for warning in semantic_results["warnings"]:
+                print(f"[WARN][calibrator] Segment {segment.segment_id}: {warning}")
+            constraint_info = f" [semantic: line={semantic_results['line_deviation_ft']:.2f}ft arc={semantic_results['arc_deviation_ft']:.2f}ft]"
+
         print(
             f"[INFO][calibrator] Segment {segment.segment_id} calibrated: "
             f"frames={segment.start_frame}-{segment.end_frame}, "
             f"inliers={inlier_count}/{segment.total_observations}, "
-            f"RMSE court={rmse_court:.3f}ft image={rmse_image:.2f}px"
+            f"RMSE court={rmse_court:.3f}ft image={rmse_image:.2f}px{constraint_info}"
         )
 
     def finalize(self) -> None:

@@ -101,11 +101,12 @@ class CVConfig:
     # --- Smoke test runtime ---
     smoke_max_frames: Optional[int] = 200  # None = full video
 
-    # --- Tracking configuration ---
+    # --- Tracking configuration (tuned for basketball) ---
     enable_tracking: bool = os.getenv("ENABLE_TRACKING", "1") == "1"
-    track_activation_threshold: float = float(os.getenv("TRACK_ACTIVATION_THRESHOLD", "0.25"))
-    lost_track_buffer: int = int(os.getenv("LOST_TRACK_BUFFER", "30"))
-    minimum_matching_threshold: float = float(os.getenv("MINIMUM_MATCHING_THRESHOLD", "0.8"))
+    track_activation_threshold: float = float(os.getenv("TRACK_ACTIVATION_THRESHOLD", "0.20"))  # Lower for partial occlusions
+    lost_track_buffer: int = int(os.getenv("LOST_TRACK_BUFFER", "60"))  # ~2s for drives/screens
+    minimum_matching_threshold: float = float(os.getenv("MINIMUM_MATCHING_THRESHOLD", "0.6"))  # Lower for fast motion
+    minimum_consecutive_frames: int = int(os.getenv("MINIMUM_CONSECUTIVE_FRAMES", "2"))  # Reduce flickering
 
     # --- Segment-level homography ---
     enable_segment_homography: bool = os.getenv("ENABLE_SEGMENT_HOMOGRAPHY", "0") == "1"

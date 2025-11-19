@@ -127,13 +127,18 @@ class PlayerTracker:
             detections = detect_players(frame, model, cfg)
             tracked = tracker.update(detections, frame_idx, img2court)
             # tracked.tracker_id now has persistent IDs
+
+    Basketball-specific tuning notes:
+    - lost_track_buffer: Higher (60-90 frames) for occlusions during drives/screens
+    - minimum_matching_threshold: Lower (0.5-0.7) for fast-moving players
+    - track_activation_threshold: Lower (0.15-0.25) to catch partial detections
     """
-    # ByteTrack parameters
-    track_activation_threshold: float = 0.25
-    lost_track_buffer: int = 30
-    minimum_matching_threshold: float = 0.8
+    # ByteTrack parameters - tuned for basketball
+    track_activation_threshold: float = 0.20  # Lower to catch partially occluded players
+    lost_track_buffer: int = 60  # ~2 seconds at 30fps for occlusions during drives
+    minimum_matching_threshold: float = 0.6  # Lower for fast-moving players with low IoU
     frame_rate: int = 30
-    minimum_consecutive_frames: int = 1
+    minimum_consecutive_frames: int = 2  # Reduce flickering false positives
 
     # Track state
     _tracker: sv.ByteTrack = field(init=False)
