@@ -297,6 +297,30 @@ class CVConfig:
     cooldown_after_made_seconds: float = 0.5
     keypoint_smoothing_len: int = 3
 
+    # ==========================================================================
+    # 13. KINEMATICS STANDARDIZATION
+    # ==========================================================================
+    # Enable standardized output for SPL/mplbasketball compatibility
+    enable_kinematics_export: bool = os.getenv("ENABLE_KINEMATICS_EXPORT", "0") == "1"
+
+    # Court type for coordinate system
+    kinematics_court_type: str = os.getenv("KINEMATICS_COURT_TYPE", "NBA")  # NBA, NCAA, FIBA
+
+    # Output units
+    kinematics_output_units: str = os.getenv("KINEMATICS_UNITS", "metres")  # metres, feet
+
+    # Player height estimation
+    default_player_height_m: float = float(os.getenv("DEFAULT_PLAYER_HEIGHT", "2.01"))  # ~6'7"
+    estimate_z_from_ratios: bool = os.getenv("ESTIMATE_Z_FROM_RATIOS", "1") == "1"
+
+    # SPL-Open-Data adapter settings
+    spl_fps: float = float(os.getenv("SPL_FPS", "120.0"))
+    spl_dataset_id: str = os.getenv("SPL_DATASET_ID", "SPL_FREETHROW")
+
+    # Export paths
+    kinematics_output_dir: Path = output_dir / "kinematics"
+    kinematics_format: str = os.getenv("KINEMATICS_FORMAT", "parquet")  # parquet, csv
+
 
 # ==========================================================================
 # HELPER FUNCTIONS
@@ -394,4 +418,5 @@ def get_enabled_features(cfg: CVConfig) -> dict:
         "siglip_reid": cfg.enable_siglip_reid,
         "websocket_streaming": cfg.enable_websocket_streaming,
         "zone_detection": cfg.enable_zone_detection,
+        "kinematics_export": cfg.enable_kinematics_export,
     }

@@ -137,15 +137,43 @@ ws.onmessage = (e) => {
 };
 ```
 
+### ✅ Kinematics Standardization & SPL Alignment
+
+**New Files**:
+- `api/src/cv/kinematics_standardization.py` (~500 lines)
+- `api/src/biomech/spl_adapter.py` (~450 lines)
+- `api/src/biomech/__init__.py`
+- `KINEMATICS_STANDARD.md` (comprehensive documentation)
+
+Unified coordinate system for CV + biomechanics:
+- Image space: `(u_px, v_px)` - pixels
+- Court space: `(x_court_m, y_court_m)` - metres, origin court center
+- World space: `(x_world_m, y_world_m, z_world_m)` - metres, z up
+
+Key features:
+- `JointCoordinate` dataclass with standardized schema
+- `KinematicsStandardizer` class for COCO → canonical conversion
+- `SPLAdapter` for SPL-Open-Data loading with Kabsch transform
+- Height estimation from anthropometric ratios
+- Parquet/CSV export for mplbasketball compatibility
+
+Config parameters added:
+- `enable_kinematics_export`, `kinematics_court_type`, `kinematics_output_units`
+- `default_player_height_m`, `estimate_z_from_ratios`
+- `spl_fps`, `spl_dataset_id`, `kinematics_format`
+
 ### 📊 Files Changed Summary
 
 | File | Action | Lines |
 |------|--------|-------|
-| `api/src/cv/config.py` | MODIFIED | +60 |
+| `api/src/cv/config.py` | MODIFIED | +80 |
 | `api/src/cv/api_endpoints.py` | NEW | ~400 |
 | `api/src/cv/shot_arc.py` | NEW | ~450 |
 | `api/src/cv/siglip_reid.py` | NEW | ~400 |
 | `api/src/cv/websocket_stream.py` | NEW | ~350 |
+| `api/src/cv/kinematics_standardization.py` | NEW | ~500 |
+| `api/src/biomech/spl_adapter.py` | NEW | ~450 |
+| `KINEMATICS_STANDARD.md` | NEW | ~350 |
 
 ### ⚠️ New Dependencies
 
