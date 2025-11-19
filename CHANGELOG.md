@@ -10,18 +10,37 @@
 ### 🎯 Objective
 Add production-ready API endpoints, real-time streaming, shot arc analysis, and visual re-identification for complete pipeline exposure.
 
-### ✅ Comprehensive Config Parameters
+### ✅ Config Reorganization & Roboflow Alignment
 
-**Modified File**: `api/src/cv/config.py` (+60 lines)
+**Modified File**: `api/src/cv/config.py` (complete rewrite ~400 lines)
 
-Added configuration sections for all Phase 3 features:
-- Jersey OCR: `enable_jersey_ocr`, `jersey_ocr_type`, `jersey_ocr_confidence`
-- Shot Arc Analysis: `ball_model_id`, `arc_min_trajectory_points`, `arc_velocity_window_frames`
-- SigLIP Re-ID: `siglip_model_name`, `siglip_similarity_threshold`, `siglip_embedding_dim`
-- WebSocket Streaming: `websocket_host`, `websocket_port`, `streaming_frame_skip`
-- FastAPI: `api_host`, `api_port`, `api_workers`, `api_max_video_size_mb`
-- Batch Processing: `batch_size`, `max_concurrent_videos`
-- Caching: `enable_model_caching`, `cache_dir`, `embedding_cache_size`
+Reorganized into 12 logical sections with clear headers:
+1. Workspace & IO
+2. Detection Models (all Roboflow models grouped)
+3. Detection Thresholds
+4. Tracking (ByteTrack + SAM2)
+5. Homography & ViewTransformer
+6. Jersey OCR & Player Identity
+7. Pose Estimation & Biomechanics
+8. Shot Arc Analysis
+9. Visual Re-ID (SigLIP)
+10. API & WebSocket Streaming
+11. Visualization & Debug
+12. Shot Event Logic
+
+**New Roboflow-aligned parameters added:**
+- SAM2 tracking: `enable_sam2_tracking`, `sam2_model_size`, `sam2_points_per_side`
+- SmolVLM2 OCR: `smolvlm2_model_name`, `jersey_ocr_type` supports "smolvlm2"
+- Semantic constraints: `enable_semantic_constraints`, `line_collinearity_threshold_ft`, `arc_radius_threshold_ft`
+- Zone detection: `enable_zone_detection`, `zone_dwell_threshold_frames`
+- Re-ID parameters: `reid_max_age_frames`, `reid_embedding_history`
+- Jersey model: `jersey_number_model_id` for YOLO classifier approach
+- Pose biomechanics: `enable_shot_form_analysis`, `release_point_min_frames`
+
+**New helper functions:**
+- `load_ball_model()` - Load ball detection model
+- `load_jersey_model()` - Load jersey number model
+- `get_enabled_features()` - Summary of all enabled features
 
 ### ✅ FastAPI CV Endpoints
 

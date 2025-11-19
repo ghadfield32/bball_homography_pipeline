@@ -1,25 +1,46 @@
+# api/src/cv/config.py
 """
 Central config for the CV shot pipeline.
-- Keeps all IDs, thresholds, and paths in one place
-- Never hardcodes API keys; uses env vars (ROBOFLOW_API_KEY or INFERENCE_API_KEY)
+
+Organized by feature area for easy navigation:
+1. Workspace & IO
+2. Detection Models (Roboflow)
+3. Detection Thresholds
+4. Tracking (ByteTrack + SAM2)
+5. Homography & ViewTransformer
+6. Jersey OCR & Player Identity
+7. Pose Estimation & Biomechanics
+8. Shot Arc Analysis
+9. Visual Re-ID (SigLIP)
+10. API & WebSocket Streaming
+11. Visualization & Debug
+
+Environment variables override defaults for all configurable parameters.
+Never hardcodes API keys; uses ROBOFLOW_API_KEY or INFERENCE_API_KEY.
 """
 from __future__ import annotations
+
+import os
 from dataclasses import dataclass
 from pathlib import Path
-import os
 from typing import Optional, Tuple
+
 import supervision as sv
 from sports import MeasurementUnit
 from sports.basketball import CourtConfiguration, League
 
+
 @dataclass(frozen=True)
 class CVConfig:
-    # --- Workspace & IO ---
+    # ==========================================================================
+    # 1. WORKSPACE & IO
+    # ==========================================================================
     workspace_dir: Path = Path(os.getenv("WORKSPACE_DIR", "/workspace"))
     data_dir: Path = workspace_dir / "api/src/cv/data"
-
     video_dir: Path = data_dir / "video"
     output_dir: Path = video_dir / "outputs"
+    images_dir: Path = data_dir / "images"
+    image_output_dir: Path = images_dir / "outputs"
 
     source_video_path: Path = Path(
         os.getenv(
@@ -29,164 +50,179 @@ class CVConfig:
         )
     )
 
-    # Optional image input (single-still pipeline)
-    images_dir: Path = data_dir / "images"
-    image_output_dir: Path = images_dir / "outputs"
+    # Video settings
+    video_fps: int = int(os.getenv("VIDEO_FPS", "30"))
 
-    # --- Models (Roboflow Inference) ---
+    # ==========================================================================
+    # 2. DETECTION MODELS (Roboflow Inference)
+    # ==========================================================================
+    # Core detection models
     player_model_id: str = os.getenv(
         "PLAYER_DETECTION_MODEL_ID", "basketball-player-detection-3-ycjdo/4"
     )
     court_model_id: str = os.getenv(
         "COURT_DETECTION_MODEL_ID", "basketball-court-detection-2/14"
     )
+    ball_model_id: str = os.getenv(
+        "BALL_MODEL_ID", "basketball-detection/1"
+    )
 
-    # --- Thresholds ---
-    confidence_threshold: float = 0.30
-    iou_threshold: float = 0.70
-    keypoint_conf_threshold: float = 0.50
-    detection_confidence_court: float = 0.30
-    min_keypoints_required: int = 4
+    # Keypoint models (for ViewTransformer-style homography)
+    court_keypoint_model_id: str = os.getenv(
+        "COURT_KEYPOINT_MODEL_ID", "basketball-court-keypoints/1"
+    )
+    rim_detection_model_id: str = os.getenv(
+        "RIM_DETECTION_MODEL_ID", "basketball-rim-detection/1"
+    )
 
-    # Homography quality gates
-    homography_rmse_court_max: float = float(os.getenv("H_RMSE_COURT_MAX", "1.5"))  # feet
-    homography_rmse_image_max: float = float(os.getenv("H_RMSE_IMAGE_MAX", "5.0"))  # pixels
-    use_cached_transform_frames: int = int(os.getenv("USE_CACHED_TRANSFORM_FRAMES", "99999"))
+    # Jersey number model (for OCR alternative)
+    jersey_number_model_id: str = os.getenv(
+        "JERSEY_NUMBER_MODEL_ID", "basketball-jersey-numbers/1"
+    )
 
-    # --- Event logic ---
-    reset_time_seconds: float = 1.7
-    min_between_starts_seconds: float = 0.5
-    cooldown_after_made_seconds: float = 0.5
+    # ==========================================================================
+    # 3. DETECTION THRESHOLDS
+    # ==========================================================================
+    confidence_threshold: float = float(os.getenv("CONFIDENCE_THRESHOLD", "0.30"))
+    iou_threshold: float = float(os.getenv("IOU_THRESHOLD", "0.70"))
+    keypoint_conf_threshold: float = float(os.getenv("KEYPOINT_CONF_THRESHOLD", "0.50"))
+    detection_confidence_court: float = float(os.getenv("COURT_CONFIDENCE", "0.30"))
+    ball_confidence_threshold: float = float(os.getenv("BALL_CONFIDENCE", "0.30"))
+    min_keypoints_required: int = int(os.getenv("MIN_KEYPOINTS_REQUIRED", "4"))
 
-    # --- Classes ---
+    # Class IDs for shot detection
     BALL_IN_BASKET_CLASS_ID: int = 1
     JUMP_SHOT_CLASS_ID: int = 5
     LAYUP_DUNK_CLASS_ID: int = 6
 
-    # Optional referee hints (id and/or label match if your model exposes them)
-    referee_class_ids: Tuple[int, ...] = tuple(int(x) for x in os.getenv("REFEREE_CLASS_IDS", "").split(",") if x.strip().isdigit())
-    referee_labels: Tuple[str, ...] = tuple(x.strip().lower() for x in os.getenv("REFEREE_LABELS", "referee,official").split(",") if x.strip())
-
-    # --- Court drawing ---
-    court_scale: int = 20
-    court_padding: int = 50
-    court_line_thickness: int = 4
-
-    # --- Smoothing ---
-    keypoint_smoothing_len: int = 3
-
-    # --- Colors ---
-    palette: sv.ColorPalette = sv.ColorPalette.from_hex([
-        "#ffff00", "#ff9b00", "#ff66ff", "#3399ff", "#ff66b2", "#ff8080",
-        "#b266ff", "#9999ff", "#66ffff", "#33ff99", "#66ff66", "#99ff00",
-    ])
-    magenta: sv.Color = sv.Color.from_hex("#FF1493")
-    cyan: sv.Color = sv.Color.from_hex("#00BFFF")
-
-    # Players (teams) + referee colors
-    team_a_color: sv.Color = sv.Color.from_hex("#1F77B4")  # blue
-    team_b_color: sv.Color = sv.Color.from_hex("#FF7F0E")  # orange
-    referee_color: sv.Color = sv.Color.from_hex("#808080") # grey
-
-    # Shots (made/miss)
-    attempt_color: sv.Color = sv.Color.from_hex("#1F77B4")  # legacy fallback
-    made_color: sv.Color = sv.Color.from_hex("#007A33")     # green
-    miss_color: sv.Color = sv.Color.from_hex("#850101")     # red
-
-    # --- League/Court ---
-    court_config: CourtConfiguration = CourtConfiguration(
-        league=League.NBA, measurement_unit=MeasurementUnit.FEET
+    # Referee hints
+    referee_class_ids: Tuple[int, ...] = tuple(
+        int(x) for x in os.getenv("REFEREE_CLASS_IDS", "").split(",") if x.strip().isdigit()
+    )
+    referee_labels: Tuple[str, ...] = tuple(
+        x.strip().lower() for x in os.getenv("REFEREE_LABELS", "referee,official").split(",") if x.strip()
     )
 
-    # --- Smoke test runtime ---
-    smoke_max_frames: Optional[int] = 200  # None = full video
-
-    # --- Tracking configuration (tuned for basketball) ---
+    # ==========================================================================
+    # 4. TRACKING (ByteTrack + SAM2)
+    # ==========================================================================
     enable_tracking: bool = os.getenv("ENABLE_TRACKING", "1") == "1"
-    track_activation_threshold: float = float(os.getenv("TRACK_ACTIVATION_THRESHOLD", "0.20"))  # Lower for partial occlusions
-    lost_track_buffer: int = int(os.getenv("LOST_TRACK_BUFFER", "60"))  # ~2s for drives/screens
-    minimum_matching_threshold: float = float(os.getenv("MINIMUM_MATCHING_THRESHOLD", "0.6"))  # Lower for fast motion
-    minimum_consecutive_frames: int = int(os.getenv("MINIMUM_CONSECUTIVE_FRAMES", "2"))  # Reduce flickering
 
-    # --- Segment-level homography ---
+    # ByteTrack parameters (tuned for basketball)
+    track_activation_threshold: float = float(os.getenv("TRACK_ACTIVATION_THRESHOLD", "0.20"))
+    lost_track_buffer: int = int(os.getenv("LOST_TRACK_BUFFER", "60"))  # ~2s at 30fps
+    minimum_matching_threshold: float = float(os.getenv("MINIMUM_MATCHING_THRESHOLD", "0.6"))
+    minimum_consecutive_frames: int = int(os.getenv("MINIMUM_CONSECUTIVE_FRAMES", "2"))
+
+    # SAM2 segmentation tracking (optional, for pixel-accurate masks)
+    enable_sam2_tracking: bool = os.getenv("ENABLE_SAM2_TRACKING", "0") == "1"
+    sam2_model_size: str = os.getenv("SAM2_MODEL_SIZE", "large")  # tiny, small, base, large
+    sam2_points_per_side: int = int(os.getenv("SAM2_POINTS_PER_SIDE", "32"))
+
+    # ==========================================================================
+    # 5. HOMOGRAPHY & VIEWTRANSFORMER
+    # ==========================================================================
+    # Segment-level homography (recommended for stable transforms)
     enable_segment_homography: bool = os.getenv("ENABLE_SEGMENT_HOMOGRAPHY", "0") == "1"
     segment_min_frames: int = int(os.getenv("SEGMENT_MIN_FRAMES", "10"))
     segment_change_threshold: float = float(os.getenv("SEGMENT_CHANGE_THRESHOLD", "50.0"))
 
-    # --- Pose estimation ---
-    enable_pose_estimation: bool = os.getenv("ENABLE_POSE_ESTIMATION", "0") == "1"
-    pose_model_name: str = os.getenv("POSE_MODEL_NAME", "yolov8n-pose")
-
-    # --- Video frame rate ---
-    video_fps: int = int(os.getenv("VIDEO_FPS", "30"))
-
-    # --- Debug / Smoke options ---
-    start_frame_index: int = int(os.getenv("START_FRAME_INDEX", "65"))
-    save_debug_stage_images: bool = os.getenv("SAVE_DEBUG_STAGE_IMAGES", "1") == "1"
-    enable_ffmpeg_compression: bool = os.getenv("ENABLE_FFMPEG_COMPRESSION", "0") == "1"
-
-    # --- Event-frame saving ---
-    save_event_frames: bool = os.getenv("SAVE_EVENT_FRAMES", "1") == "1"
-    event_frame_limit: int = int(os.getenv("EVENT_FRAME_LIMIT", "12"))
-
-    # --- UI / behavior toggles ---
-    show_images: bool = os.getenv("SHOW_IMAGES", "0") == "1"
-
-    # Fail fast by default
-    strict_fail: bool = os.getenv("STRICT_FAIL", "1") == "1"
-
-    # Write a final single PNG summary (overhead court) per video
-    emit_summary_image: bool = os.getenv("EMIT_SUMMARY_IMAGE", "1") == "1"
-
-    preview_images_in_terminal: bool = os.getenv("PREVIEW_IMAGES_IN_TERMINAL", "0") == "1"
-    terminal_preview_max_width: int = int(os.getenv("TERMINAL_PREVIEW_MAX_WIDTH", "80"))
-
-    # --- add these fields inside CVConfig dataclass ---
-    # Homography robustness / debugging
+    # Robust homography (RANSAC)
     enable_robust_homography: bool = os.getenv("ENABLE_ROBUST_HOMO", "1") == "1"
     ransac_reproj_thresh_px: float = float(os.getenv("RANSAC_REPROJ_THRESH_PX", "10.0"))
-    min_inlier_ratio: float = float(os.getenv("HOMO_MIN_INLIER_RATIO", "0.5"))  # relative to kept keypoints
-    min_spread_px: float = float(os.getenv("HOMO_MIN_SPREAD_PX", "80.0"))       # ensure not degenerate cluster
-
-    # Homography RANSAC thresholds (destination-units explicit)
     ransac_reproj_thresh_court_ft: float = float(os.getenv("RANSAC_REPROJ_THRESH_COURT_FT", "1.0"))
     ransac_reproj_thresh_image_px: float = float(os.getenv("RANSAC_REPROJ_THRESH_IMAGE_PX", "5.0"))
+    min_inlier_ratio: float = float(os.getenv("HOMO_MIN_INLIER_RATIO", "0.5"))
+    min_spread_px: float = float(os.getenv("HOMO_MIN_SPREAD_PX", "80.0"))
 
-    # --- Homography proof / visualization ---
+    # Quality gates
+    homography_rmse_court_max: float = float(os.getenv("H_RMSE_COURT_MAX", "1.5"))  # feet
+    homography_rmse_image_max: float = float(os.getenv("H_RMSE_IMAGE_MAX", "5.0"))  # pixels
+    use_cached_transform_frames: int = int(os.getenv("USE_CACHED_TRANSFORM_FRAMES", "99999"))
+
+    # Semantic constraints (line collinearity, arc radius validation)
+    enable_semantic_constraints: bool = os.getenv("ENABLE_SEMANTIC_CONSTRAINTS", "1") == "1"
+    line_collinearity_threshold_ft: float = float(os.getenv("LINE_COLLINEARITY_THRESH", "0.5"))
+    arc_radius_threshold_ft: float = float(os.getenv("ARC_RADIUS_THRESH", "1.0"))
+    three_point_radius_ft: float = 23.75  # NBA standard
+
+    # Visualization
     homography_proof_enable: bool = os.getenv("HOMOGRAPHY_PROOF_ENABLE", "1") == "1"
     homography_grid_step_ft: float = float(os.getenv("HOMOGRAPHY_GRID_STEP_FT", "5.0"))
 
-    # --- Jersey OCR configuration ---
+    # ==========================================================================
+    # 6. JERSEY OCR & PLAYER IDENTITY
+    # ==========================================================================
     enable_jersey_ocr: bool = os.getenv("ENABLE_JERSEY_OCR", "0") == "1"
-    jersey_ocr_type: str = os.getenv("JERSEY_OCR_TYPE", "easyocr")  # easyocr, paddleocr, none
+
+    # OCR backend: "easyocr", "paddleocr", "smolvlm2", "yolo_classifier", "none"
+    jersey_ocr_type: str = os.getenv("JERSEY_OCR_TYPE", "easyocr")
     jersey_ocr_confidence: float = float(os.getenv("JERSEY_OCR_CONFIDENCE", "0.5"))
+
+    # Jersey region extraction (relative to player bbox)
     jersey_number_region_top: float = float(os.getenv("JERSEY_REGION_TOP", "0.1"))
     jersey_number_region_bottom: float = float(os.getenv("JERSEY_REGION_BOTTOM", "0.5"))
+    jersey_number_region_left: float = float(os.getenv("JERSEY_REGION_LEFT", "0.2"))
+    jersey_number_region_right: float = float(os.getenv("JERSEY_REGION_RIGHT", "0.8"))
 
-    # --- Shot arc analysis (ball trajectory) ---
+    # SmolVLM2 OCR (VLM-based, more accurate but slower)
+    smolvlm2_model_name: str = os.getenv("SMOLVLM2_MODEL", "HuggingFaceTB/SmolVLM2-500M-Video-Instruct")
+
+    # Majority voting for stable assignments
+    jersey_vote_window: int = int(os.getenv("JERSEY_VOTE_WINDOW", "10"))
+
+    # ==========================================================================
+    # 7. POSE ESTIMATION & BIOMECHANICS
+    # ==========================================================================
+    enable_pose_estimation: bool = os.getenv("ENABLE_POSE_ESTIMATION", "0") == "1"
+
+    # YOLO-pose model
+    pose_model_name: str = os.getenv("POSE_MODEL_NAME", "yolov8n-pose")  # yolov8n/s/m-pose
+    pose_confidence_threshold: float = float(os.getenv("POSE_CONFIDENCE", "0.3"))
+
+    # Biomechanics analysis
+    enable_shot_form_analysis: bool = os.getenv("ENABLE_SHOT_FORM", "0") == "1"
+    release_point_min_frames: int = int(os.getenv("RELEASE_MIN_FRAMES", "5"))
+
+    # Zone detection (for 3-second violations, lane occupancy)
+    enable_zone_detection: bool = os.getenv("ENABLE_ZONE_DETECTION", "0") == "1"
+    zone_dwell_threshold_frames: int = int(os.getenv("ZONE_DWELL_THRESH", "90"))  # 3s at 30fps
+
+    # ==========================================================================
+    # 8. SHOT ARC ANALYSIS
+    # ==========================================================================
     enable_shot_arc_analysis: bool = os.getenv("ENABLE_SHOT_ARC_ANALYSIS", "0") == "1"
-    ball_model_id: str = os.getenv("BALL_MODEL_ID", "basketball-detection/1")  # Roboflow ball model
-    ball_confidence_threshold: float = float(os.getenv("BALL_CONFIDENCE", "0.3"))
+
+    # Trajectory tracking
     arc_min_trajectory_points: int = int(os.getenv("ARC_MIN_POINTS", "5"))
     arc_velocity_window_frames: int = int(os.getenv("ARC_VELOCITY_WINDOW", "3"))
     arc_angle_smoothing: int = int(os.getenv("ARC_ANGLE_SMOOTHING", "3"))
 
-    # --- SigLIP embeddings for visual re-ID ---
+    # Physical constants
+    rim_height_ft: float = 10.0
+    ball_diameter_ft: float = 0.78  # ~9.4 inches
+
+    # ==========================================================================
+    # 9. VISUAL RE-ID (SigLIP Embeddings)
+    # ==========================================================================
     enable_siglip_reid: bool = os.getenv("ENABLE_SIGLIP_REID", "0") == "1"
+
+    # SigLIP model
     siglip_model_name: str = os.getenv("SIGLIP_MODEL_NAME", "google/siglip-base-patch16-224")
-    siglip_similarity_threshold: float = float(os.getenv("SIGLIP_SIMILARITY_THRESHOLD", "0.85"))
     siglip_embedding_dim: int = int(os.getenv("SIGLIP_EMBEDDING_DIM", "768"))
+
+    # Matching thresholds
+    siglip_similarity_threshold: float = float(os.getenv("SIGLIP_SIMILARITY_THRESHOLD", "0.85"))
     siglip_crop_padding: float = float(os.getenv("SIGLIP_CROP_PADDING", "0.1"))
 
-    # --- WebSocket streaming ---
-    enable_websocket_streaming: bool = os.getenv("ENABLE_WEBSOCKET_STREAMING", "0") == "1"
-    websocket_host: str = os.getenv("WEBSOCKET_HOST", "0.0.0.0")
-    websocket_port: int = int(os.getenv("WEBSOCKET_PORT", "8765"))
-    streaming_frame_skip: int = int(os.getenv("STREAMING_FRAME_SKIP", "1"))  # Process every Nth frame
-    streaming_buffer_size: int = int(os.getenv("STREAMING_BUFFER_SIZE", "30"))
-    streaming_quality: int = int(os.getenv("STREAMING_QUALITY", "80"))  # JPEG quality 1-100
+    # Re-ID parameters
+    reid_max_age_frames: int = int(os.getenv("REID_MAX_AGE_FRAMES", "90"))  # 3s at 30fps
+    reid_embedding_history: int = int(os.getenv("REID_EMBEDDING_HISTORY", "50"))
 
-    # --- FastAPI endpoints ---
+    # ==========================================================================
+    # 10. API & WEBSOCKET STREAMING
+    # ==========================================================================
+    # FastAPI configuration
     api_host: str = os.getenv("API_HOST", "0.0.0.0")
     api_port: int = int(os.getenv("API_PORT", "8000"))
     api_workers: int = int(os.getenv("API_WORKERS", "1"))
@@ -194,27 +230,85 @@ class CVConfig:
     api_timeout_seconds: int = int(os.getenv("API_TIMEOUT_SECONDS", "300"))
     api_cors_origins: str = os.getenv("API_CORS_ORIGINS", "*")
 
-    # --- Additional Roboflow models/datasets ---
-    court_keypoint_model_id: str = os.getenv("COURT_KEYPOINT_MODEL_ID", "basketball-court-keypoints/1")
-    rim_detection_model_id: str = os.getenv("RIM_DETECTION_MODEL_ID", "basketball-rim-detection/1")
+    # WebSocket streaming
+    enable_websocket_streaming: bool = os.getenv("ENABLE_WEBSOCKET_STREAMING", "0") == "1"
+    websocket_host: str = os.getenv("WEBSOCKET_HOST", "0.0.0.0")
+    websocket_port: int = int(os.getenv("WEBSOCKET_PORT", "8765"))
+    streaming_frame_skip: int = int(os.getenv("STREAMING_FRAME_SKIP", "1"))
+    streaming_buffer_size: int = int(os.getenv("STREAMING_BUFFER_SIZE", "30"))
+    streaming_quality: int = int(os.getenv("STREAMING_QUALITY", "80"))
 
-    # --- Batch processing ---
+    # Batch processing
     batch_size: int = int(os.getenv("BATCH_SIZE", "1"))
     max_concurrent_videos: int = int(os.getenv("MAX_CONCURRENT_VIDEOS", "2"))
 
-    # --- Caching ---
+    # Caching
     enable_model_caching: bool = os.getenv("ENABLE_MODEL_CACHING", "1") == "1"
     cache_dir: Path = Path(os.getenv("CACHE_DIR", "/tmp/bball_cv_cache"))
     embedding_cache_size: int = int(os.getenv("EMBEDDING_CACHE_SIZE", "1000"))
 
-# ---- Helpers ----
+    # ==========================================================================
+    # 11. VISUALIZATION & DEBUG
+    # ==========================================================================
+    # Court configuration
+    court_config: CourtConfiguration = CourtConfiguration(
+        league=League.NBA, measurement_unit=MeasurementUnit.FEET
+    )
+    court_scale: int = 20
+    court_padding: int = 50
+    court_line_thickness: int = 4
+
+    # Colors
+    palette: sv.ColorPalette = sv.ColorPalette.from_hex([
+        "#ffff00", "#ff9b00", "#ff66ff", "#3399ff", "#ff66b2", "#ff8080",
+        "#b266ff", "#9999ff", "#66ffff", "#33ff99", "#66ff66", "#99ff00",
+    ])
+    magenta: sv.Color = sv.Color.from_hex("#FF1493")
+    cyan: sv.Color = sv.Color.from_hex("#00BFFF")
+
+    # Team colors
+    team_a_color: sv.Color = sv.Color.from_hex("#1F77B4")  # blue
+    team_b_color: sv.Color = sv.Color.from_hex("#FF7F0E")  # orange
+    referee_color: sv.Color = sv.Color.from_hex("#808080")  # grey
+
+    # Shot result colors
+    attempt_color: sv.Color = sv.Color.from_hex("#1F77B4")
+    made_color: sv.Color = sv.Color.from_hex("#007A33")  # green
+    miss_color: sv.Color = sv.Color.from_hex("#850101")  # red
+
+    # Debug options
+    smoke_max_frames: Optional[int] = 200
+    start_frame_index: int = int(os.getenv("START_FRAME_INDEX", "65"))
+    save_debug_stage_images: bool = os.getenv("SAVE_DEBUG_STAGE_IMAGES", "1") == "1"
+    enable_ffmpeg_compression: bool = os.getenv("ENABLE_FFMPEG_COMPRESSION", "0") == "1"
+    save_event_frames: bool = os.getenv("SAVE_EVENT_FRAMES", "1") == "1"
+    event_frame_limit: int = int(os.getenv("EVENT_FRAME_LIMIT", "12"))
+    show_images: bool = os.getenv("SHOW_IMAGES", "0") == "1"
+    strict_fail: bool = os.getenv("STRICT_FAIL", "1") == "1"
+    emit_summary_image: bool = os.getenv("EMIT_SUMMARY_IMAGE", "1") == "1"
+    preview_images_in_terminal: bool = os.getenv("PREVIEW_IMAGES_IN_TERMINAL", "0") == "1"
+    terminal_preview_max_width: int = int(os.getenv("TERMINAL_PREVIEW_MAX_WIDTH", "80"))
+
+    # ==========================================================================
+    # 12. SHOT EVENT LOGIC
+    # ==========================================================================
+    reset_time_seconds: float = 1.7
+    min_between_starts_seconds: float = 0.5
+    cooldown_after_made_seconds: float = 0.5
+    keypoint_smoothing_len: int = 3
+
+
+# ==========================================================================
+# HELPER FUNCTIONS
+# ==========================================================================
 
 def ensure_dirs(cfg: CVConfig) -> None:
+    """Create output directories if they don't exist."""
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
 
 
 def resolve_api_key() -> str:
-    """Return an API key from env, supporting either ROBOFLOW_API_KEY or INFERENCE_API_KEY."""
+    """Return API key from env, supporting ROBOFLOW_API_KEY or INFERENCE_API_KEY."""
     api_key = os.getenv("ROBOFLOW_API_KEY") or os.getenv("INFERENCE_API_KEY")
     if not api_key:
         raise RuntimeError(
@@ -225,8 +319,8 @@ def resolve_api_key() -> str:
 
 def _set_inference_feature_flags() -> None:
     """
-    Disable optional models we do not use so 'inference' doesn't warn about missing extras.
-    This does NOT affect the player/court models.
+    Disable optional inference models we don't use to avoid warnings.
+    Enable specific models based on config when needed.
     """
     os.environ.setdefault("QWEN_2_5_ENABLED", "False")
     os.environ.setdefault("CORE_MODEL_SAM_ENABLED", "False")
@@ -240,9 +334,17 @@ def _set_inference_feature_flags() -> None:
 
 
 def load_models(cfg: CVConfig):
-    """Lazy import to avoid heavy import at module import time."""
+    """
+    Load core detection models (player + court).
+
+    Args:
+        cfg: CVConfig instance
+
+    Returns:
+        (player_model, court_model)
+    """
     _set_inference_feature_flags()
-    from inference import get_model  # type: ignore
+    from inference import get_model
 
     api_key = resolve_api_key()
     player_model = get_model(model_id=cfg.player_model_id, api_key=api_key)
@@ -250,13 +352,46 @@ def load_models(cfg: CVConfig):
     return player_model, court_model
 
 
+def load_ball_model(cfg: CVConfig):
+    """Load ball detection model for shot arc analysis."""
+    _set_inference_feature_flags()
+    from inference import get_model
+
+    api_key = resolve_api_key()
+    return get_model(model_id=cfg.ball_model_id, api_key=api_key)
+
+
+def load_jersey_model(cfg: CVConfig):
+    """Load jersey number detection model."""
+    _set_inference_feature_flags()
+    from inference import get_model
+
+    api_key = resolve_api_key()
+    return get_model(model_id=cfg.jersey_number_model_id, api_key=api_key)
+
+
 def court_base_image(cfg: CVConfig):
+    """Generate base court diagram for visualization."""
     from sports.basketball import draw_court
 
-    base = draw_court(
+    return draw_court(
         config=cfg.court_config,
         scale=cfg.court_scale,
         padding=cfg.court_padding,
         line_thickness=cfg.court_line_thickness,
     )
-    return base
+
+
+def get_enabled_features(cfg: CVConfig) -> dict:
+    """Get summary of enabled pipeline features."""
+    return {
+        "tracking": cfg.enable_tracking,
+        "sam2_tracking": cfg.enable_sam2_tracking,
+        "segment_homography": cfg.enable_segment_homography,
+        "jersey_ocr": cfg.enable_jersey_ocr,
+        "pose_estimation": cfg.enable_pose_estimation,
+        "shot_arc_analysis": cfg.enable_shot_arc_analysis,
+        "siglip_reid": cfg.enable_siglip_reid,
+        "websocket_streaming": cfg.enable_websocket_streaming,
+        "zone_detection": cfg.enable_zone_detection,
+    }
