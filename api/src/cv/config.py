@@ -94,6 +94,18 @@ PROFILE_PRESETS: Dict[str, Dict[str, Any]] = {
         "enable_jersey_ocr": False,
         "streaming_frame_skip": 2,
     },
+    "cv_debug_kinematics": {
+        # Debug profile for kinematics validation
+        # Use with short clips to verify pose → kinematics pipeline
+        "enable_tracking": True,
+        "enable_segment_homography": True,
+        "enable_pose_estimation": True,
+        "enable_kinematics_export": True,
+        "enable_shot_arc_analysis": False,
+        "enable_siglip_reid": False,
+        "enable_jersey_ocr": False,
+        "enable_websocket_streaming": False,
+    },
 }
 
 

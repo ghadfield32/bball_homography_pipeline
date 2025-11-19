@@ -261,13 +261,46 @@ JOINT_ID_TO_CANONICAL = {
 }
 ```
 
+### ✅ Kinematics Validation & Debug Tools
+
+**New Files**:
+- `tools/visualize_kinematics_overlay.py` - Visual sanity check tool (~300 lines)
+
+**Modified Files**:
+- `api/src/cv/config.py` - Added cv_debug_kinematics profile
+
+Features:
+- Visualization tool overlays joints from kinematics parquet onto video frames
+- Validates canonical joint names (HEAD, R_WRIST, L_KNEE, etc.)
+- Draws skeleton connections and player labels
+- Prints frame stats with court coordinates
+
+New profile `cv_debug_kinematics`:
+- Minimal features for fast kinematics validation
+- Enables: tracking, homography, pose, kinematics_export
+- Disables: arc analysis, re-ID, OCR, streaming
+
+Usage:
+```bash
+# Run pipeline with debug profile
+export CV_PROFILE=cv_debug_kinematics
+python -m api.src.cv.shot_pipeline video.mp4
+
+# Visualize output
+python -m tools.visualize_kinematics_overlay \
+  --video video.mp4 \
+  --kinematics kinematics/video_kinematics.parquet \
+  --every-n-frames 10
+```
+
 ### 📊 Files Changed Summary
 
 | File | Action | Lines |
 |------|--------|-------|
-| `api/src/cv/config.py` | MODIFIED | +100 |
+| `api/src/cv/config.py` | MODIFIED | +120 |
 | `api/src/cv/shot_pipeline.py` | MODIFIED | +80 |
 | `api/src/cv/pose_pipeline.py` | MODIFIED | +80 |
+| `tools/visualize_kinematics_overlay.py` | NEW | ~300 |
 | `api/src/cv/api_endpoints.py` | NEW | ~400 |
 | `api/src/cv/shot_arc.py` | NEW | ~450 |
 | `api/src/cv/siglip_reid.py` | NEW | ~400 |

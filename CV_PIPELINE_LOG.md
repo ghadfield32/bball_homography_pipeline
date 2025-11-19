@@ -9,6 +9,7 @@
 - 2025-11-19 — Added CV profiles: fast_debug, tracking_only, full_biomech, live_stream
 - 2025-11-19 — Profile presets auto-configure: tracking, homography, pose, arc, OCR, re-ID, streaming
 - 2025-11-19 — Use `apply_profile_to_env("full_biomech")` before `load_cv_config()` for programmatic switching
+- 2025-11-19 — Added cv_debug_kinematics profile for fast pose → kinematics validation
 
 ## [Detection Models]
 
@@ -79,6 +80,13 @@
 - 2025-11-19 — Checks: ball_model for arc, siglip_model for re-ID, pose_model for pose
 - 2025-11-19 — Kinematics: video_fps > 0 required, format must be parquet|csv
 
+## [Validation & Debug Tools]
+
+- 2025-11-19 — Added visualize_kinematics_overlay.py tool for visual sanity checks
+- 2025-11-19 — Overlays joint positions from parquet onto video frames
+- 2025-11-19 — Validates canonical joint names and court coordinate bounds
+- 2025-11-19 — Usage: `python -m tools.visualize_kinematics_overlay --video v.mp4 --kinematics k.parquet`
+
 ## [Open TODOs]
 
 - [ ] Tune ByteTrack further with real game footage (screens, paint occlusions)
@@ -86,3 +94,4 @@
 - [ ] Calibrate SPL transform with actual Visual3D data
 - [ ] Add depth estimation for better z_world computation
 - [ ] Benchmark profile performance (frames/sec per profile)
+- [ ] Validate kinematics output on real video (joint names, court bounds, timebase)
