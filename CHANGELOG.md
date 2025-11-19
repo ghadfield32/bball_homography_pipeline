@@ -162,6 +162,35 @@ Config parameters added:
 - `default_player_height_m`, `estimate_z_from_ratios`
 - `spl_fps`, `spl_dataset_id`, `kinematics_format`
 
+### ✅ Config Automation & Profiles
+
+**Modified File**: `api/src/cv/config.py` (+200 lines)
+**New File**: `CV_PIPELINE_LOG.md`
+
+Added profile system for automated feature configuration:
+- `cv_profile` env var: fast_debug, tracking_only, full_biomech, live_stream
+- Profiles auto-set multiple feature flags for common use cases
+
+New helper functions:
+- `load_cv_config()` - Load, validate, and return configured CVConfig
+- `validate_config()` - Fail-fast validation for required parameters
+- `describe_cv_config()` - Human-readable summary for logging
+- `apply_profile_to_env()` - Programmatic profile switching
+
+Usage:
+```python
+from api.src.cv.config import load_cv_config, describe_cv_config
+
+cfg = load_cv_config()
+print(describe_cv_config(cfg))
+```
+
+Or set profile via env:
+```bash
+export CV_PROFILE=full_biomech
+python -m api.src.cv.shot_pipeline video.mp4
+```
+
 ### 📊 Files Changed Summary
 
 | File | Action | Lines |

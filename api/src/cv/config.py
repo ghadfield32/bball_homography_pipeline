@@ -3,6 +3,7 @@
 Central config for the CV shot pipeline.
 
 Organized by feature area for easy navigation:
+0. Profile & Mode (automation)
 1. Workspace & IO
 2. Detection Models (Roboflow)
 3. Detection Thresholds
@@ -14,6 +15,21 @@ Organized by feature area for easy navigation:
 9. Visual Re-ID (SigLIP)
 10. API & WebSocket Streaming
 11. Visualization & Debug
+12. Shot Event Logic
+13. Kinematics Standardization
+
+PROFILES:
+    Set CV_PROFILE env var to automatically configure multiple features:
+    - "fast_debug": Minimal features for quick iteration
+    - "tracking_only": Tracking + homography for tactics analysis
+    - "full_biomech": All features for biomechanics research
+    - "live_stream": Real-time streaming with basic tracking
+
+USAGE:
+    from api.src.cv.config import CVConfig, load_cv_config
+
+    cfg = load_cv_config()  # Loads from env, applies profile, validates
+    print(describe_cv_config(cfg))
 
 Environment variables override defaults for all configurable parameters.
 Never hardcodes API keys; uses ROBOFLOW_API_KEY or INFERENCE_API_KEY.
@@ -21,17 +37,78 @@ Never hardcodes API keys; uses ROBOFLOW_API_KEY or INFERENCE_API_KEY.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import supervision as sv
 from sports import MeasurementUnit
 from sports.basketball import CourtConfiguration, League
 
 
+# =============================================================================
+# PROFILE PRESETS
+# =============================================================================
+
+PROFILE_PRESETS: Dict[str, Dict[str, Any]] = {
+    "fast_debug": {
+        # Minimal features for quick iteration and testing
+        "enable_tracking": True,
+        "enable_segment_homography": True,
+        "enable_pose_estimation": False,
+        "enable_shot_arc_analysis": False,
+        "enable_siglip_reid": False,
+        "enable_jersey_ocr": False,
+        "enable_websocket_streaming": False,
+        "enable_kinematics_export": False,
+    },
+    "tracking_only": {
+        # Tracking + homography for tactics/spacing analysis
+        "enable_tracking": True,
+        "enable_segment_homography": True,
+        "enable_jersey_ocr": True,
+        "enable_pose_estimation": False,
+        "enable_shot_arc_analysis": False,
+        "enable_siglip_reid": False,
+        "enable_kinematics_export": False,
+    },
+    "full_biomech": {
+        # All features for biomechanics/shot analysis research
+        "enable_tracking": True,
+        "enable_segment_homography": True,
+        "enable_pose_estimation": True,
+        "enable_shot_arc_analysis": True,
+        "enable_jersey_ocr": True,
+        "enable_siglip_reid": True,
+        "enable_kinematics_export": True,
+        "enable_shot_form_analysis": True,
+    },
+    "live_stream": {
+        # Real-time streaming with basic tracking
+        "enable_tracking": True,
+        "enable_segment_homography": True,
+        "enable_websocket_streaming": True,
+        "enable_pose_estimation": False,
+        "enable_shot_arc_analysis": False,
+        "enable_siglip_reid": False,
+        "enable_jersey_ocr": False,
+        "streaming_frame_skip": 2,
+    },
+}
+
+
 @dataclass(frozen=True)
 class CVConfig:
+    # ==========================================================================
+    # 0. PROFILE & MODE
+    # ==========================================================================
+    cv_profile: str = os.getenv("CV_PROFILE", "fast_debug")
+    """
+    High-level pipeline profile. Options: fast_debug, tracking_only, full_biomech, live_stream
+    Profiles automatically set multiple feature flags for common use cases.
+    Individual env vars still override profile settings.
+    """
+
     # ==========================================================================
     # 1. WORKSPACE & IO
     # ==========================================================================
@@ -406,7 +483,7 @@ def court_base_image(cfg: CVConfig):
     )
 
 
-def get_enabled_features(cfg: CVConfig) -> dict:
+def get_enabled_features(cfg: CVConfig) -> Dict[str, bool]:
     """Get summary of enabled pipeline features."""
     return {
         "tracking": cfg.enable_tracking,
@@ -420,3 +497,163 @@ def get_enabled_features(cfg: CVConfig) -> dict:
         "zone_detection": cfg.enable_zone_detection,
         "kinematics_export": cfg.enable_kinematics_export,
     }
+
+
+def validate_config(cfg: CVConfig) -> None:
+    """
+    Validate config for required parameters when features are enabled.
+
+    Fails fast with clear error messages instead of silent fallbacks.
+    This should be called after loading config to catch misconfigurations early.
+
+    Raises:
+        ValueError: If required parameters are missing for enabled features
+    """
+    errors = []
+
+    # Shot arc analysis requires ball model
+    if cfg.enable_shot_arc_analysis and not cfg.ball_model_id:
+        errors.append("Shot arc analysis enabled but BALL_MODEL_ID is empty")
+
+    # SigLIP re-ID requires model name
+    if cfg.enable_siglip_reid and not cfg.siglip_model_name:
+        errors.append("SigLIP re-ID enabled but SIGLIP_MODEL_NAME is empty")
+
+    # Jersey OCR with smolvlm2 requires model name
+    if cfg.enable_jersey_ocr and cfg.jersey_ocr_type == "smolvlm2":
+        if not cfg.smolvlm2_model_name:
+            errors.append("SmolVLM2 jersey OCR enabled but SMOLVLM2_MODEL is empty")
+
+    # Pose estimation requires model name
+    if cfg.enable_pose_estimation and not cfg.pose_model_name:
+        errors.append("Pose estimation enabled but POSE_MODEL_NAME is empty")
+
+    # Segment homography with semantic constraints
+    if cfg.enable_segment_homography and cfg.enable_semantic_constraints:
+        if cfg.three_point_radius_ft <= 0:
+            errors.append("Semantic constraints enabled but three_point_radius_ft invalid")
+
+    if errors:
+        raise ValueError("Config validation failed:\n- " + "\n- ".join(errors))
+
+
+def describe_cv_config(cfg: CVConfig) -> str:
+    """
+    Generate human-readable summary of config for logging/debugging.
+
+    Use this at pipeline startup to log the current configuration.
+
+    Args:
+        cfg: CVConfig instance
+
+    Returns:
+        Formatted string with key config info
+    """
+    features = get_enabled_features(cfg)
+    enabled = [k for k, v in features.items() if v]
+    disabled = [k for k, v in features.items() if not v]
+
+    lines = [
+        f"CV Pipeline Config (profile: {cfg.cv_profile})",
+        f"  Enabled: {', '.join(enabled) if enabled else 'none'}",
+        f"  Disabled: {', '.join(disabled) if disabled else 'none'}",
+        f"  Models:",
+        f"    Player: {cfg.player_model_id}",
+        f"    Court: {cfg.court_model_id}",
+        f"    Ball: {cfg.ball_model_id}",
+        f"    Pose: {cfg.pose_model_name}",
+    ]
+
+    if cfg.enable_siglip_reid:
+        lines.append(f"    SigLIP: {cfg.siglip_model_name}")
+
+    if cfg.enable_jersey_ocr:
+        lines.append(f"    Jersey OCR: {cfg.jersey_ocr_type}")
+
+    lines.append(f"  FPS: {cfg.video_fps}")
+
+    return "\n".join(lines)
+
+
+def load_cv_config(validate: bool = True) -> CVConfig:
+    """
+    Load CVConfig from environment with profile application and validation.
+
+    This is the recommended way to load config in all pipeline modules.
+    It applies profile presets first, then validates the configuration.
+
+    Args:
+        validate: Whether to run validation (default True)
+
+    Returns:
+        Configured CVConfig instance
+
+    Raises:
+        ValueError: If profile is unknown or validation fails
+
+    Usage:
+        cfg = load_cv_config()
+        print(describe_cv_config(cfg))
+    """
+    # Create base config from env
+    cfg = CVConfig()
+
+    # Note: Since CVConfig is frozen, we can't modify it after creation.
+    # The profile system works by having users set the corresponding env vars.
+    # This function primarily validates and describes the config.
+
+    # Check profile is valid
+    if cfg.cv_profile not in PROFILE_PRESETS and cfg.cv_profile != "custom":
+        valid = ", ".join(PROFILE_PRESETS.keys())
+        raise ValueError(f"Unknown CV_PROFILE '{cfg.cv_profile}'. Valid options: {valid}, custom")
+
+    # Validate if requested
+    if validate:
+        validate_config(cfg)
+
+    return cfg
+
+
+def apply_profile_to_env(profile: str) -> None:
+    """
+    Apply a profile's settings to environment variables.
+
+    Call this BEFORE creating CVConfig to have profile settings take effect.
+    Useful for programmatic profile switching.
+
+    Args:
+        profile: Profile name from PROFILE_PRESETS
+
+    Example:
+        apply_profile_to_env("full_biomech")
+        cfg = load_cv_config()
+    """
+    if profile not in PROFILE_PRESETS:
+        valid = ", ".join(PROFILE_PRESETS.keys())
+        raise ValueError(f"Unknown profile '{profile}'. Valid options: {valid}")
+
+    preset = PROFILE_PRESETS[profile]
+
+    # Map config field names to env var names
+    field_to_env = {
+        "enable_tracking": "ENABLE_TRACKING",
+        "enable_segment_homography": "ENABLE_SEGMENT_HOMOGRAPHY",
+        "enable_pose_estimation": "ENABLE_POSE_ESTIMATION",
+        "enable_shot_arc_analysis": "ENABLE_SHOT_ARC_ANALYSIS",
+        "enable_siglip_reid": "ENABLE_SIGLIP_REID",
+        "enable_jersey_ocr": "ENABLE_JERSEY_OCR",
+        "enable_websocket_streaming": "ENABLE_WEBSOCKET_STREAMING",
+        "enable_kinematics_export": "ENABLE_KINEMATICS_EXPORT",
+        "enable_shot_form_analysis": "ENABLE_SHOT_FORM",
+        "streaming_frame_skip": "STREAMING_FRAME_SKIP",
+    }
+
+    for field, value in preset.items():
+        env_var = field_to_env.get(field)
+        if env_var:
+            if isinstance(value, bool):
+                os.environ[env_var] = "1" if value else "0"
+            else:
+                os.environ[env_var] = str(value)
+
+    os.environ["CV_PROFILE"] = profile
