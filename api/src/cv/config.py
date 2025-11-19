@@ -101,6 +101,24 @@ class CVConfig:
     # --- Smoke test runtime ---
     smoke_max_frames: Optional[int] = 200  # None = full video
 
+    # --- Tracking configuration ---
+    enable_tracking: bool = os.getenv("ENABLE_TRACKING", "1") == "1"
+    track_activation_threshold: float = float(os.getenv("TRACK_ACTIVATION_THRESHOLD", "0.25"))
+    lost_track_buffer: int = int(os.getenv("LOST_TRACK_BUFFER", "30"))
+    minimum_matching_threshold: float = float(os.getenv("MINIMUM_MATCHING_THRESHOLD", "0.8"))
+
+    # --- Segment-level homography ---
+    enable_segment_homography: bool = os.getenv("ENABLE_SEGMENT_HOMOGRAPHY", "0") == "1"
+    segment_min_frames: int = int(os.getenv("SEGMENT_MIN_FRAMES", "10"))
+    segment_change_threshold: float = float(os.getenv("SEGMENT_CHANGE_THRESHOLD", "50.0"))
+
+    # --- Pose estimation ---
+    enable_pose_estimation: bool = os.getenv("ENABLE_POSE_ESTIMATION", "0") == "1"
+    pose_model_name: str = os.getenv("POSE_MODEL_NAME", "yolov8n-pose")
+
+    # --- Video frame rate ---
+    video_fps: int = int(os.getenv("VIDEO_FPS", "30"))
+
     # --- Debug / Smoke options ---
     start_frame_index: int = int(os.getenv("START_FRAME_INDEX", "65"))
     save_debug_stage_images: bool = os.getenv("SAVE_DEBUG_STAGE_IMAGES", "1") == "1"

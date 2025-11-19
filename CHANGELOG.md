@@ -5,7 +5,136 @@
 
 ---
 
-## [Current] CV Pipeline Function Missing Fix - 2025-11-19
+## [Current] CV Pipeline Enhancements - Player Tracking, Segment Homography, Pose Estimation - 2025-11-19
+
+### 🎯 Objective
+Add production-grade enhancements to the CV pipeline: persistent player tracking, segment-level homography, and pose estimation for biomechanics analysis.
+
+### ✅ Phase 1: ByteTrack Player Tracking Module
+
+**New File**: `api/src/cv/tracker.py` (~300 lines)
+
+Key features:
+- `PlayerTracker` class using supervision's ByteTrack for multi-object tracking
+- `TrackState` dataclass with history, team voting, and analytics (speed, distance)
+- Persistent track IDs across frames with configurable parameters
+- Team label attachment using majority voting for stability
+- Integration helper `assign_teams_to_detections()` for existing pipeline
+
+Configuration (in `config.py`):
+```python
+enable_tracking: bool = True
+track_activation_threshold: float = 0.25
+lost_track_buffer: int = 30
+minimum_matching_threshold: float = 0.8
+```
+
+### ✅ Phase 2: Segment-Level Homography Calibrator
+
+**New File**: `api/src/cv/homography_calibrator.py` (~400 lines)
+
+Key features:
+- `HomographyCalibrator` class for multi-frame H optimization
+- Camera segment detection via keypoint centroid jumps
+- Aggregates keypoints across segment frames for robust fit
+- RANSAC + weighted least-squares refinement
+- Quality metrics (RMSE court/image) per segment
+- Interpolation for unreliable frames
+- `get_quality_mask()` for downstream confidence-aware analytics
+
+Configuration:
+```python
+enable_segment_homography: bool = False  # Off by default
+segment_min_frames: int = 10
+segment_change_threshold: float = 50.0  # pixels
+```
+
+### ✅ Phase 3: Pose Estimation Pipeline
+
+**New File**: `api/src/cv/pose_pipeline.py` (~450 lines)
+
+Key features:
+- `PosePipeline` class using YOLO-pose models (yolov8n-pose, yolov8s-pose, yolov8m-pose)
+- `PoseObservation` and `PlayerPoseHistory` for per-track pose data
+- 17-keypoint COCO skeleton with court coordinate transformation
+- Joint trajectory extraction for any keypoint
+- `get_release_point_estimate()` for shot analysis
+- `analyze_shot_form()` for elbow angle and joint sequences
+
+Configuration:
+```python
+enable_pose_estimation: bool = False  # Off by default
+pose_model_name: str = "yolov8n-pose"
+video_fps: int = 30
+```
+
+### ✅ Phase 4: Enhanced Pipeline Integration
+
+**Modified File**: `api/src/cv/shot_pipeline.py` (+280 lines)
+
+New function `process_video_enhanced()` at line 2683:
+- Integrates all three new modules with existing pipeline
+- Team classification attached to tracks (stable labels)
+- Returns extended metrics: tracking_analytics, homography_segments, pose_tracks
+- Backward compatible - original `process_video()` unchanged
+
+**Modified File**: `api/src/cv/config.py` (+20 lines)
+
+Added configuration sections for:
+- Tracking parameters
+- Segment-level homography
+- Pose estimation
+- Video frame rate
+
+### 📊 Files Changed Summary
+
+| File | Action | Lines |
+|------|--------|-------|
+| `api/src/cv/tracker.py` | NEW | ~300 |
+| `api/src/cv/homography_calibrator.py` | NEW | ~400 |
+| `api/src/cv/pose_pipeline.py` | NEW | ~450 |
+| `api/src/cv/shot_pipeline.py` | MODIFIED | +280 |
+| `api/src/cv/config.py` | MODIFIED | +20 |
+
+### 🔧 Usage
+
+```python
+from api.src.cv.config import CVConfig
+from api.src.cv.shot_pipeline import process_video_enhanced
+
+cfg = CVConfig()
+cfg.enable_tracking = True
+cfg.enable_segment_homography = True
+cfg.enable_pose_estimation = True
+
+results = process_video_enhanced(
+    video_path=video_path,
+    cfg=cfg,
+    player_model=player_model,
+    court_model=court_model,
+)
+
+# Extended results include:
+# - tracking_analytics: {total_tracks, active_tracks, team_counts, avg_distance_ft, max_speed_fps}
+# - homography_segments: number of camera segments detected
+# - segment_quality: [{id, rmse_court, inliers}, ...]
+# - pose_tracks: number of players with pose data
+```
+
+### ⚠️ Dependencies
+No new dependencies - uses existing:
+- `supervision>=0.26` (ByteTrack built-in)
+- `ultralytics==8.3.158` (YOLO-pose models)
+
+### 📋 Next Steps
+- Test with sample videos to validate tracking accuracy
+- Tune ByteTrack parameters for basketball occlusions
+- Add jersey number OCR for player re-identification
+- Implement semantic constraints for homography (line-on-line, arc radius)
+
+---
+
+## [Previous] CV Pipeline Function Missing Fix - 2025-11-19
 
 ### 🎯 Objective
 Fix `NameError: name 'finalize_smoke_outputs' is not defined` in `piotr_automated_pipeline copy.ipynb`
